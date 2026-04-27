@@ -7,6 +7,14 @@ from .exceptions import (
     IT600ConnectionError,
 )
 
+__all__ = [
+    "__version__",
+    "IT600AuthenticationError",
+    "IT600CommandError",
+    "IT600ConnectionError",
+    "IT600Gateway",
+]
+
 
 def __getattr__(name: str):
     """Load gateway classes lazily so utility imports stay lightweight."""
