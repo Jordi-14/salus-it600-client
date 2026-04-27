@@ -17,6 +17,26 @@ This package allows you to control and monitor your Salus iT600 smart home devic
 pip install salus-it600-client
 ```
 
+## Migration from `pyit600`
+
+`salus-it600-client` is a renamed maintained successor of `pyit600`. It does
+not provide the old `pyit600` import namespace, so callers must update imports:
+
+```python
+from salus_it600.gateway import IT600Gateway
+from salus_it600.exceptions import IT600ConnectionError
+```
+
+If another project depends on this package, replace the old dependency with:
+
+```text
+salus-it600-client>=0.1.0
+```
+
+The first maintained release is `0.1.0`. It keeps the public API close to
+`pyit600 0.5.1`, while moving compatibility fixes for current Salus gateway
+payloads into this library.
+
 ## Usage
  - Instantiate the IT600Gateway device with local ip address and EUID of your gateway. You can find EUID written down on the bottom of your gateway (eg. `001E5E0D32906128`).
  - Status can be polled using the `poll_status()` command.
@@ -105,6 +125,8 @@ Also check if you have "Local Wifi Mode" enabled:
 ### Contributing
 
 If you want to help to get your device supported, open GitHub issue and add your device model number and output of `main.py` program. Be sure to run this program with --debug option.
+
+Release publishing is documented in [RELEASE.md](RELEASE.md).
 
 ## Project origin
 

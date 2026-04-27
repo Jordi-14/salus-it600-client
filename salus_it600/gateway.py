@@ -839,7 +839,7 @@ class IT600Gateway:
             _LOGGER.error("Cannot set fan mode: device not found with the specified id: %s", device_id)
             return
 
-        request_data = { "sFanS": { "FanMode": 5 if mode == FAN_MODE_AUTO else 3 if mode == FAN_MODE_HIGH else 2 if mode == FAN_MODE_MID else 1 if mode == FAN_MODE_LOW else 0 } }
+        request_data = { "sFanS": { "FanMode": 5 if mode == FAN_MODE_AUTO else 3 if mode == FAN_MODE_HIGH else 2 if mode == FAN_MODE_MEDIUM else 1 if mode == FAN_MODE_LOW else 0 } }
 
         await self._make_encrypted_request(
             "write",

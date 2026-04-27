@@ -1,0 +1,93 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build release distributions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import runpy
+          import tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          project_version = project["project"]["version"]
+          package_version = runpy.run_path("salus_it600/__version__.py")["__version__"]
+
+          if package_version != project_version:
+              raise SystemExit(
+                  f"Version mismatch: pyproject.toml has {project_version}, "
+                  f"salus_it600/__version__.py has {package_version}"
+              )
+
+          expected_tag = f"v{project_version}"
+          if tag != expected_tag:
+              raise SystemExit(f"Tag {tag} does not match package version {expected_tag}")
+          PY
+
+      - name: Install build tools
+        run: python -m pip install --upgrade build twine ruff
+
+      - name: Run critical Ruff checks
+        run: python -m ruff check salus_it600 tests main.py --select E9,F63,F7,F82
+
+      - name: Compile Python files
+        run: python -m compileall -q salus_it600 tests main.py
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Run unit tests
+        run: python -m unittest
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check distributions
+        run: python -m twine check dist/*
+
+      - name: Store distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/salus-it600-client/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -4,8 +4,10 @@ import asyncio
 import json
 import unittest
 
+from salus_it600.const import FAN_MODE_MEDIUM
 from salus_it600.exceptions import IT600CommandError, IT600ConnectionError
 from salus_it600.gateway import IT600Gateway
+from salus_it600.models import ClimateDevice
 
 
 class PassthroughEncryptor:
@@ -48,6 +50,36 @@ def make_gateway(session: FakeSession) -> IT600Gateway:
     gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128", session=session)
     gateway._encryptor = PassthroughEncryptor()
     return gateway
+
+
+def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
+    """Create a minimal climate device for command tests."""
+    return ClimateDevice(
+        available=True,
+        name="Climate",
+        unique_id=device_id,
+        temperature_unit="C",
+        precision=0.1,
+        current_temperature=20.0,
+        target_temperature=21.0,
+        max_temp=35.0,
+        min_temp=5.0,
+        current_humidity=None,
+        hvac_mode="Heat",
+        hvac_action="Idle",
+        hvac_modes=[],
+        preset_mode="Permanent Hold",
+        preset_modes=[],
+        fan_mode=None,
+        fan_modes=[],
+        locked=None,
+        supported_features=0,
+        device_class="temperature",
+        data={"UniID": device_id},
+        manufacturer="SALUS",
+        model="FC600",
+        sw_version=None,
+    )
 
 
 class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
@@ -95,6 +127,18 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertIn("timeout", str(context.exception))
+
+    async def test_set_climate_device_fan_mode_maps_medium_mode(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        await gateway.set_climate_device_fan_mode("climate-1", FAN_MODE_MEDIUM)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual("write", request["requestAttr"])
+        self.assertEqual({"FanMode": 2}, request["id"][0]["sFanS"])
+        self.assertEqual({"UniID": "climate-1"}, request["id"][0]["data"])
 
 
 if __name__ == "__main__":
