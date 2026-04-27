@@ -23,7 +23,7 @@ class PassthroughEncryptor:
 class FakeResponse:
     """Minimal aiohttp response stand-in."""
 
-    def __init__(self, payload: dict):
+    def __init__(self, payload):
         self._payload = payload
 
     async def read(self) -> bytes:
@@ -127,6 +127,48 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertIn("timeout", str(context.exception))
+
+    async def test_make_encrypted_request_rejects_non_object_response(self):
+        session = FakeSession(["not", "an", "object"])
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600CommandError) as context:
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertIn("must be an object", str(context.exception))
+
+    async def test_make_encrypted_request_rejects_missing_status(self):
+        session = FakeSession({"id": []})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600CommandError) as context:
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertIn("missing 'status'", str(context.exception))
+
+    async def test_poll_status_rejects_readall_without_device_list(self):
+        session = FakeSession({"status": "success"})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600CommandError) as context:
+            await gateway.poll_status()
+
+        self.assertIn("missing list field 'id'", str(context.exception))
+
+    async def test_poll_status_rejects_non_object_device_entries(self):
+        session = FakeSession({"status": "success", "id": ["bad-device"]})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600CommandError) as context:
+            await gateway.poll_status()
+
+        self.assertIn("non-object device entries", str(context.exception))
 
     async def test_set_climate_device_fan_mode_maps_medium_mode(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})

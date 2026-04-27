@@ -50,6 +50,7 @@ _LOGGER = logging.getLogger("salus_it600")
 
 DEFAULT_HOLD_TYPE = 2
 DEFAULT_RUNNING_STATE = 0
+PARSING_EXCEPTIONS = (KeyError, TypeError, ValueError)
 _MISSING_HOLD_TYPE_WARNED: set[str] = set()
 
 
@@ -78,6 +79,72 @@ def _hold_type(payload: dict[str, Any], unique_id: str) -> int:
         _MISSING_HOLD_TYPE_WARNED.add(unique_id)
 
     return payload.get("HoldType", DEFAULT_HOLD_TYPE)
+
+
+def _validate_gateway_response(response: Any, context: str) -> dict[str, Any]:
+    """Validate that a gateway response is a JSON object with a status field."""
+    if not isinstance(response, dict):
+        raise IT600CommandError(
+            f"Gateway {context} response must be an object, got "
+            f"{type(response).__name__}"
+        )
+
+    if "status" not in response:
+        raise IT600CommandError(
+            f"Gateway {context} response is missing 'status'. "
+            f"Got keys: {sorted(response)}"
+        )
+
+    return response
+
+
+def _response_items(response: Any, context: str) -> list[dict[str, Any]]:
+    """Return and validate the device list from a gateway response."""
+    response = _validate_gateway_response(response, context)
+    items = response.get("id")
+    if not isinstance(items, list):
+        raise IT600CommandError(
+            f"Gateway {context} response is missing list field 'id'. "
+            f"Got keys: {sorted(response)}"
+        )
+
+    invalid_indexes = [
+        index for index, item in enumerate(items) if not isinstance(item, dict)
+    ]
+    if invalid_indexes:
+        raise IT600CommandError(
+            f"Gateway {context} response contains non-object device entries "
+            f"at indexes {invalid_indexes}"
+        )
+
+    return items
+
+
+def _device_status_request_items(
+    devices: list[Any],
+    device_type: str,
+) -> list[dict[str, dict[str, Any]]]:
+    """Build deviceid request items, skipping malformed discovery entries."""
+    request_items = []
+    for device in devices:
+        data = device.get("data") if isinstance(device, dict) else None
+        if not isinstance(data, dict):
+            _LOGGER.warning(
+                "Skipping %s discovery entry without a data object: %r",
+                device_type,
+                device,
+            )
+            continue
+        request_items.append({"data": data})
+
+    return request_items
+
+
+def _is_binary_sensor_summary(device: dict[str, Any]) -> bool:
+    """Return whether a readall entry describes a binary sensor."""
+    basic = device.get("sBasicS")
+    model = basic.get("ModelIdentifier") if isinstance(basic, dict) else None
+    return "sIASZS" in device or model in ["it600MINITRV", "it600Receiver"]
 
 
 class IT600Gateway:
@@ -137,8 +204,11 @@ class IT600Gateway:
             )
 
             gateway = next(
-                filter(lambda x: len(x.get("sGateway", {}).get("NetworkLANMAC", "")) > 0, all_devices["id"]),
-                None
+                filter(
+                    lambda x: len(x.get("sGateway", {}).get("NetworkLANMAC", "")) > 0,
+                    _response_items(all_devices, "gateway discovery"),
+                ),
+                None,
             )
 
             if gateway is None:
@@ -152,7 +222,7 @@ class IT600Gateway:
             try:
                 async with asyncio.timeout(self._request_timeout):
                     await self._session.get(f"http://{self._host}:{self._port}/")
-            except Exception:
+            except (asyncio.TimeoutError, client_exceptions.ClientError):
                 raise IT600ConnectionError(
                     "Error occurred while communicating with iT600 gateway: "
                     "check if you have specified host/IP address correctly"
@@ -173,76 +243,54 @@ class IT600Gateway:
             }
         )
 
-        try:
-            gateway_devices = list(
-                filter(lambda x: "sGateway" in x, all_devices["id"])
-            )
+        device_items = _response_items(all_devices, "readall")
 
-            await self._refresh_gateway_device(gateway_devices, send_callback)
-        except Exception:
-            _LOGGER.exception("Failed to poll gateway device")
+        gateway_devices = list(
+            filter(lambda x: "sGateway" in x, device_items)
+        )
+        await self._refresh_gateway_device(gateway_devices, send_callback)
 
-        try:
-            climate_devices = list(
-                filter(lambda x: ("sIT600TH" in x) or ("sTherS" in x), all_devices["id"])
-            )
+        climate_devices = list(
+            filter(lambda x: ("sIT600TH" in x) or ("sTherS" in x), device_items)
+        )
+        await self._refresh_climate_devices(climate_devices, send_callback)
 
-            await self._refresh_climate_devices(climate_devices, send_callback)
-        except Exception:
-            _LOGGER.exception("Failed to poll climate devices")
+        binary_sensors = list(filter(_is_binary_sensor_summary, device_items))
+        await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
 
-        try:
-            binary_sensors = list(
-                filter(lambda x: "sIASZS" in x or
-                                 ("sBasicS" in x and
-                                  "ModelIdentifier" in x["sBasicS"] and
-                                  x["sBasicS"]["ModelIdentifier"] in ["it600MINITRV", "it600Receiver"]), all_devices["id"])
-            )
+        sensors = list(
+            filter(lambda x: "sTempS" in x, device_items)
+        )
+        await self._refresh_sensor_devices(sensors, send_callback)
 
-            await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
-        except Exception:
-            _LOGGER.exception("Failed to poll binary sensors")
+        switches = list(
+            filter(lambda x: "sOnOffS" in x, device_items)
+        )
+        await self._refresh_switch_devices(switches, send_callback)
 
-        try:
-            sensors = list(
-                filter(lambda x: "sTempS" in x, all_devices["id"])
-            )
-
-            await self._refresh_sensor_devices(sensors, send_callback)
-        except Exception:
-            _LOGGER.exception("Failed to poll sensors")
-
-        try:
-            switches = list(
-                filter(lambda x: "sOnOffS" in x, all_devices["id"])
-            )
-
-            await self._refresh_switch_devices(switches, send_callback)
-        except Exception:
-            _LOGGER.exception("Failed to poll switches")
-
-        try:
-            covers = list(
-                filter(lambda x: "sLevelS" in x, all_devices["id"])
-            )
-
-            await self._refresh_cover_devices(covers, send_callback)
-        except Exception:
-            _LOGGER.exception("Failed to poll covers")
+        covers = list(
+            filter(lambda x: "sLevelS" in x, device_items)
+        )
+        await self._refresh_cover_devices(covers, send_callback)
 
     async def _refresh_gateway_device(self, devices: List[Any], send_callback=False):
         local_device: Optional[GatewayDevice] = None
 
         if devices:
+            request_items = _device_status_request_items(devices, "gateway")
+            if not request_items:
+                self._gateway_device = local_device
+                return
+
             status = await self._make_encrypted_request(
                 "read",
                 {
                     "requestAttr": "deviceid",
-                    "id": [{"data": device["data"]} for device in devices]
+                    "id": request_items
                 }
             )
 
-            for device_status in status["id"]:
+            for device_status in _response_items(status, "gateway device detail"):
                 unique_id = device_status.get("sGateway", {}).get("NetworkLANMAC", None)
 
                 if unique_id is None:
@@ -259,7 +307,7 @@ class IT600Gateway:
                         model=model,
                         sw_version=device_status.get("sOTA", {}).get("OTAFirmwareVersion_d", None)
                     )
-                except Exception:
+                except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll gateway %s", unique_id)
 
             self._gateway_device = local_device
@@ -269,15 +317,20 @@ class IT600Gateway:
         local_devices = {}
 
         if devices:
+            request_items = _device_status_request_items(devices, "cover")
+            if not request_items:
+                self._cover_devices = local_devices
+                return
+
             status = await self._make_encrypted_request(
                 "read",
                 {
                     "requestAttr": "deviceid",
-                    "id": [{"data": device["data"]} for device in devices]
+                    "id": request_items
                 }
             )
 
-            for device_status in status["id"]:
+            for device_status in _response_items(status, "cover device detail"):
                 unique_id = device_status.get("data", {}).get("UniID", None)
 
                 if unique_id is None:
@@ -319,7 +372,7 @@ class IT600Gateway:
                     if send_callback:
                         self._cover_devices[device.unique_id] = device
                         await self._send_cover_update_callback(device_id=device.unique_id)
-                except Exception:
+                except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._cover_devices = local_devices
@@ -329,23 +382,28 @@ class IT600Gateway:
         local_devices = {}
 
         if devices:
+            request_items = _device_status_request_items(devices, "switch")
+            if not request_items:
+                self._switch_devices = local_devices
+                return
+
             status = await self._make_encrypted_request(
                 "read",
                 {
                     "requestAttr": "deviceid",
-                    "id": [{"data": device["data"]} for device in devices]
+                    "id": request_items
                 }
             )
 
-            for device_status in status["id"]:
+            for device_status in _response_items(status, "switch device detail"):
                 unique_id = device_status.get("data", {}).get("UniID", None)
 
                 if unique_id is None:
                     continue
-                else:
-                    unique_id = unique_id + "_" + str(device_status["data"]["Endpoint"])  # Double switches have a different endpoint id, but the same device id
 
                 try:
+                    unique_id = unique_id + "_" + str(device_status["data"]["Endpoint"])  # Double switches have a different endpoint id, but the same device id
+
                     if device_status.get("sLevelS", None) is not None:
                         continue  # Skip roller shutter endpoint in combined roller shutter/relay device
 
@@ -373,7 +431,7 @@ class IT600Gateway:
                     if send_callback:
                         self._switch_devices[device.unique_id] = device
                         await self._send_switch_update_callback(device_id=device.unique_id)
-                except Exception:
+                except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._switch_devices = local_devices
@@ -383,15 +441,20 @@ class IT600Gateway:
         local_devices = {}
 
         if devices:
+            request_items = _device_status_request_items(devices, "sensor")
+            if not request_items:
+                self._sensor_devices = local_devices
+                return
+
             status = await self._make_encrypted_request(
                 "read",
                 {
                     "requestAttr": "deviceid",
-                    "id": [{"data": device["data"]} for device in devices]
+                    "id": request_items
                 }
             )
 
-            for device_status in status["id"]:
+            for device_status in _response_items(status, "sensor device detail"):
                 unique_id = device_status.get("data", {}).get("UniID", None)
 
                 if unique_id is None:
@@ -425,7 +488,7 @@ class IT600Gateway:
                     if send_callback:
                         self._sensor_devices[device.unique_id] = device
                         await self._send_sensor_update_callback(device_id=device.unique_id)
-                except Exception:
+                except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._sensor_devices = local_devices
@@ -435,15 +498,20 @@ class IT600Gateway:
         local_devices = {}
 
         if devices:
+            request_items = _device_status_request_items(devices, "binary sensor")
+            if not request_items:
+                self._binary_sensor_devices = local_devices
+                return
+
             status = await self._make_encrypted_request(
                 "read",
                 {
                     "requestAttr": "deviceid",
-                    "id": [{"data": device["data"]} for device in devices]
+                    "id": request_items
                 }
             )
 
-            for device_status in status["id"]:
+            for device_status in _response_items(status, "binary sensor device detail"):
                 unique_id = device_status.get("data", {}).get("UniID", None)
 
                 if unique_id is None:
@@ -484,7 +552,7 @@ class IT600Gateway:
                     if send_callback:
                         self._binary_sensor_devices[device.unique_id] = device
                         await self._send_binary_sensor_update_callback(device_id=device.unique_id)
-                except Exception:
+                except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._binary_sensor_devices = local_devices
@@ -494,15 +562,20 @@ class IT600Gateway:
         local_devices = {}
 
         if devices:
+            request_items = _device_status_request_items(devices, "climate")
+            if not request_items:
+                self._climate_devices = local_devices
+                return
+
             status = await self._make_encrypted_request(
                 "read",
                 {
                     "requestAttr": "deviceid",
-                    "id": [{"data": device["data"]} for device in devices]
+                    "id": request_items
                 }
             )
 
-            for device_status in status["id"]:
+            for device_status in _response_items(status, "climate device detail"):
                 unique_id = device_status.get("data", {}).get("UniID", None)
 
                 if unique_id is None:
@@ -585,7 +658,7 @@ class IT600Gateway:
                     if send_callback:
                         self._climate_devices[device.unique_id] = device
                         await self._send_climate_update_callback(device_id=device.unique_id)
-                except Exception:
+                except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll device %s", unique_id)
 
         self._climate_devices = local_devices
@@ -966,9 +1039,12 @@ class IT600Gateway:
                     if self._debug:
                         _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
 
-                    response_json = json.loads(response_json_string)
+                    response_json = _validate_gateway_response(
+                        json.loads(response_json_string),
+                        command,
+                    )
 
-                    if not response_json["status"] == "success":
+                    if response_json["status"] != "success":
                         repr_request_body = repr(request_body)
                         repr_response_body = repr(response_json)
 
@@ -989,13 +1065,20 @@ class IT600Gateway:
                     "Error occurred while communicating with iT600 gateway: "
                     "check if you have specified host/IP address correctly"
                 ) from e
+            except client_exceptions.ClientError as e:
+                raise IT600ConnectionError(
+                    "Error occurred while communicating with iT600 gateway"
+                ) from e
+            except json.JSONDecodeError as e:
+                _LOGGER.error("Gateway returned invalid JSON for %s command", command)
+                raise IT600CommandError(
+                    "Invalid JSON response received from iT600 gateway"
+                ) from e
             except IT600CommandError:
                 raise
-            except Exception as e:
+            except Exception:
                 _LOGGER.exception("Unexpected error while communicating with iT600 gateway")
-                raise IT600CommandError(
-                    "Unknown error occurred while communicating with iT600 gateway"
-                ) from e
+                raise
 
     async def close(self) -> None:
         """Close open client session."""
