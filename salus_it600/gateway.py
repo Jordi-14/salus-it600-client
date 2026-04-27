@@ -6,7 +6,6 @@ import logging
 from typing import Any, Dict, List, Optional, Callable, Awaitable
 
 import aiohttp
-import async_timeout
 
 from aiohttp import client_exceptions
 
@@ -48,6 +47,38 @@ from .exceptions import (
 from .models import GatewayDevice, ClimateDevice, BinarySensorDevice, SwitchDevice, CoverDevice, SensorDevice
 
 _LOGGER = logging.getLogger("salus_it600")
+
+DEFAULT_HOLD_TYPE = 2
+DEFAULT_RUNNING_STATE = 0
+_MISSING_HOLD_TYPE_WARNED: set[str] = set()
+
+
+def _device_name(device_status: dict[str, Any], unique_id: str | None) -> str:
+    """Return a device name from a raw Salus gateway payload."""
+    default_name = unique_id or "Unknown"
+    raw_name = device_status.get("sZDO", {}).get(
+        "DeviceName",
+        json.dumps({"deviceName": default_name}),
+    )
+
+    try:
+        return json.loads(raw_name)["deviceName"]
+    except (KeyError, TypeError, ValueError):
+        return default_name
+
+
+def _hold_type(payload: dict[str, Any], unique_id: str) -> int:
+    """Return HoldType, defaulting broken payloads to permanent hold."""
+    if "HoldType" not in payload and unique_id not in _MISSING_HOLD_TYPE_WARNED:
+        _LOGGER.warning(
+            "Salus climate device %s is missing HoldType in the gateway payload; "
+            "treating it as Permanent Hold so the device can load",
+            unique_id,
+        )
+        _MISSING_HOLD_TYPE_WARNED.add(unique_id)
+
+    return payload.get("HoldType", DEFAULT_HOLD_TYPE)
+
 
 class IT600Gateway:
     def __init__(
@@ -119,7 +150,7 @@ class IT600Gateway:
             return gateway["sGateway"]["NetworkLANMAC"]
         except IT600ConnectionError as ae:
             try:
-                with async_timeout.timeout(self._request_timeout):
+                async with asyncio.timeout(self._request_timeout):
                     await self._session.get(f"http://{self._host}:{self._port}/")
             except Exception:
                 raise IT600ConnectionError(
@@ -148,8 +179,8 @@ class IT600Gateway:
             )
 
             await self._refresh_gateway_device(gateway_devices, send_callback)
-        except BaseException as e:
-            _LOGGER.error("Failed to poll gateway device", exc_info=e)
+        except Exception:
+            _LOGGER.exception("Failed to poll gateway device")
 
         try:
             climate_devices = list(
@@ -157,8 +188,8 @@ class IT600Gateway:
             )
 
             await self._refresh_climate_devices(climate_devices, send_callback)
-        except BaseException as e:
-            _LOGGER.error("Failed to poll climate devices", exc_info=e)
+        except Exception:
+            _LOGGER.exception("Failed to poll climate devices")
 
         try:
             binary_sensors = list(
@@ -169,8 +200,8 @@ class IT600Gateway:
             )
 
             await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
-        except BaseException as e:
-            _LOGGER.error("Failed to poll binary sensors", exc_info=e)
+        except Exception:
+            _LOGGER.exception("Failed to poll binary sensors")
 
         try:
             sensors = list(
@@ -178,8 +209,8 @@ class IT600Gateway:
             )
 
             await self._refresh_sensor_devices(sensors, send_callback)
-        except BaseException as e:
-            _LOGGER.error("Failed to poll sensors", exc_info=e)
+        except Exception:
+            _LOGGER.exception("Failed to poll sensors")
 
         try:
             switches = list(
@@ -187,8 +218,8 @@ class IT600Gateway:
             )
 
             await self._refresh_switch_devices(switches, send_callback)
-        except BaseException as e:
-            _LOGGER.error("Failed to poll switches", exc_info=e)
+        except Exception:
+            _LOGGER.exception("Failed to poll switches")
 
         try:
             covers = list(
@@ -196,8 +227,8 @@ class IT600Gateway:
             )
 
             await self._refresh_cover_devices(covers, send_callback)
-        except BaseException as e:
-            _LOGGER.error("Failed to poll covers", exc_info=e)
+        except Exception:
+            _LOGGER.exception("Failed to poll covers")
 
     async def _refresh_gateway_device(self, devices: List[Any], send_callback=False):
         local_device: Optional[GatewayDevice] = None
@@ -228,8 +259,8 @@ class IT600Gateway:
                         model=model,
                         sw_version=device_status.get("sOTA", {}).get("OTAFirmwareVersion_d", None)
                     )
-                except BaseException as e:
-                    _LOGGER.error(f"Failed to poll gateway {unique_id}", exc_info=e)
+                except Exception:
+                    _LOGGER.exception("Failed to poll gateway %s", unique_id)
 
             self._gateway_device = local_device
             _LOGGER.debug("Refreshed gateway device")
@@ -288,8 +319,8 @@ class IT600Gateway:
                     if send_callback:
                         self._cover_devices[device.unique_id] = device
                         await self._send_cover_update_callback(device_id=device.unique_id)
-                except BaseException as e:
-                    _LOGGER.error(f"Failed to poll device {unique_id}", exc_info=e)
+                except Exception:
+                    _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._cover_devices = local_devices
             _LOGGER.debug("Refreshed %s cover devices", len(self._cover_devices))
@@ -342,8 +373,8 @@ class IT600Gateway:
                     if send_callback:
                         self._switch_devices[device.unique_id] = device
                         await self._send_switch_update_callback(device_id=device.unique_id)
-                except BaseException as e:
-                    _LOGGER.error(f"Failed to poll device {unique_id}", exc_info=e)
+                except Exception:
+                    _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._switch_devices = local_devices
             _LOGGER.debug("Refreshed %s sensor devices", len(self._switch_devices))
@@ -394,8 +425,8 @@ class IT600Gateway:
                     if send_callback:
                         self._sensor_devices[device.unique_id] = device
                         await self._send_sensor_update_callback(device_id=device.unique_id)
-                except BaseException as e:
-                    _LOGGER.error(f"Failed to poll device {unique_id}", exc_info=e)
+                except Exception:
+                    _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._sensor_devices = local_devices
             _LOGGER.debug("Refreshed %s sensor devices", len(self._sensor_devices))
@@ -453,8 +484,8 @@ class IT600Gateway:
                     if send_callback:
                         self._binary_sensor_devices[device.unique_id] = device
                         await self._send_binary_sensor_update_callback(device_id=device.unique_id)
-                except BaseException as e:
-                    _LOGGER.error(f"Failed to poll device {unique_id}", exc_info=e)
+                except Exception:
+                    _LOGGER.exception("Failed to poll device %s", unique_id)
 
             self._binary_sensor_devices = local_devices
             _LOGGER.debug("Refreshed %s binary sensor devices", len(self._binary_sensor_devices))
@@ -487,7 +518,7 @@ class IT600Gateway:
 
                     global_args = {
                         "available": True if device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1 else False,
-                        "name": json.loads(device_status.get("sZDO", {}).get("DeviceName", '{"deviceName": "Unknown"}'))["deviceName"],
+                        "name": _device_name(device_status, unique_id),
                         "unique_id": unique_id,
                         "temperature_unit": TEMP_CELSIUS,  # API always reports temperature as celsius
                         "precision": 0.1,
@@ -504,6 +535,8 @@ class IT600Gateway:
                         if model is not None and "SQ610" in model:
                             current_humidity = th.get("SunnySetpoint_x100", None)  # Quantum thermostats store humidity there, other thermostats store there one of the setpoint temperatures
 
+                        hold_type = _hold_type(th, unique_id)
+                        running_state = th.get("RunningState", DEFAULT_RUNNING_STATE)
                         device = ClimateDevice(
                             **global_args,
                             current_humidity=current_humidity,
@@ -511,10 +544,10 @@ class IT600Gateway:
                             target_temperature=th["HeatingSetpoint_x100"] / 100,
                             max_temp=th.get("MaxHeatSetpoint_x100", 3500) / 100,
                             min_temp=th.get("MinHeatSetpoint_x100", 500) / 100,
-                            hvac_mode=HVAC_MODE_OFF if th["HoldType"] == 7 else HVAC_MODE_HEAT if th["HoldType"] == 2 else HVAC_MODE_AUTO,
-                            hvac_action=CURRENT_HVAC_OFF if th["HoldType"] == 7 else CURRENT_HVAC_IDLE if th["RunningState"] % 2 == 0 else CURRENT_HVAC_HEAT,  # RunningState 0 or 128 => idle, 1 or 129 => heating
+                            hvac_mode=HVAC_MODE_OFF if hold_type == 7 else HVAC_MODE_HEAT if hold_type == 2 else HVAC_MODE_AUTO,
+                            hvac_action=CURRENT_HVAC_OFF if hold_type == 7 else CURRENT_HVAC_IDLE if running_state % 2 == 0 else CURRENT_HVAC_HEAT,  # RunningState 0 or 128 => idle, 1 or 129 => heating
                             hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
-                            preset_mode=PRESET_OFF if th["HoldType"] == 7 else PRESET_PERMANENT_HOLD if th["HoldType"] == 2 else PRESET_FOLLOW_SCHEDULE,
+                            preset_mode=PRESET_OFF if hold_type == 7 else PRESET_PERMANENT_HOLD if hold_type == 2 else PRESET_FOLLOW_SCHEDULE,
                             preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
                             fan_mode=None,
                             fan_modes=None,
@@ -524,6 +557,8 @@ class IT600Gateway:
                     elif ther is not None and scomm is not None and sfans is not None:
                         is_heating: bool = (ther["SystemMode"] == 4)
                         fan_mode: int = sfans.get("FanMode", 5)
+                        hold_type = _hold_type(scomm, unique_id)
+                        running_state = ther.get("RunningState", DEFAULT_RUNNING_STATE)
 
                         device = ClimateDevice(
                             **global_args,
@@ -533,9 +568,9 @@ class IT600Gateway:
                             max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / 100) if is_heating else (ther.get("MaxCoolSetpoint_x100", 4000) / 100),
                             min_temp=(ther.get("MinHeatSetpoint_x100", 500) / 100) if is_heating else (ther.get("MinCoolSetpoint_x100", 500) / 100),
                             hvac_mode=HVAC_MODE_HEAT if ther["SystemMode"] == 4 else HVAC_MODE_COOL if ther["SystemMode"] == 3 else HVAC_MODE_AUTO,
-                            hvac_action=CURRENT_HVAC_OFF if scomm["HoldType"] == 7 else CURRENT_HVAC_IDLE if ther["RunningState"] == 0 else CURRENT_HVAC_HEAT if is_heating and ther["RunningState"] == 33 else CURRENT_HVAC_HEAT_IDLE if is_heating else CURRENT_HVAC_COOL if ther["RunningState"] == 66 else CURRENT_HVAC_COOL_IDLE,
+                            hvac_action=CURRENT_HVAC_OFF if hold_type == 7 else CURRENT_HVAC_IDLE if running_state == 0 else CURRENT_HVAC_HEAT if is_heating and running_state == 33 else CURRENT_HVAC_HEAT_IDLE if is_heating else CURRENT_HVAC_COOL if running_state == 66 else CURRENT_HVAC_COOL_IDLE,
                             hvac_modes=[HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO],
-                            preset_mode=PRESET_OFF if scomm["HoldType"] == 7 else PRESET_PERMANENT_HOLD if scomm["HoldType"] == 2 else PRESET_ECO if scomm["HoldType"] == 10 else PRESET_TEMPORARY_HOLD if scomm["HoldType"] == 1 else PRESET_FOLLOW_SCHEDULE,
+                            preset_mode=PRESET_OFF if hold_type == 7 else PRESET_PERMANENT_HOLD if hold_type == 2 else PRESET_ECO if hold_type == 10 else PRESET_TEMPORARY_HOLD if hold_type == 1 else PRESET_FOLLOW_SCHEDULE,
                             preset_modes=[PRESET_OFF, PRESET_PERMANENT_HOLD, PRESET_ECO, PRESET_TEMPORARY_HOLD, PRESET_FOLLOW_SCHEDULE],
                             fan_mode=FAN_MODE_OFF if fan_mode == 0 else FAN_MODE_HIGH if fan_mode == 3 else FAN_MODE_MEDIUM if fan_mode == 2 else FAN_MODE_LOW if fan_mode == 1 else FAN_MODE_AUTO, # fan_mode == 5 => FAN_MODE_AUTO
                             fan_modes=[FAN_MODE_AUTO, FAN_MODE_HIGH, FAN_MODE_MEDIUM, FAN_MODE_LOW, FAN_MODE_OFF],
@@ -550,8 +585,8 @@ class IT600Gateway:
                     if send_callback:
                         self._climate_devices[device.unique_id] = device
                         await self._send_climate_update_callback(device_id=device.unique_id)
-                except BaseException as e:
-                    _LOGGER.error(f"Failed to poll device {unique_id}", exc_info=e)
+                except Exception:
+                    _LOGGER.exception("Failed to poll device %s", unique_id)
 
         self._climate_devices = local_devices
         _LOGGER.debug("Refreshed %s climate devices", len(self._climate_devices))
@@ -919,7 +954,7 @@ class IT600Gateway:
                 if self._debug:
                     _LOGGER.debug("Gateway request: POST %s\n%s\n", request_url, request_body_json)
 
-                with async_timeout.timeout(self._request_timeout):
+                async with asyncio.timeout(self._request_timeout):
                     resp = await self._session.post(
                         request_url,
                         data=self._encryptor.encrypt(request_body_json),
@@ -935,10 +970,12 @@ class IT600Gateway:
 
                     if not response_json["status"] == "success":
                         repr_request_body = repr(request_body)
+                        repr_response_body = repr(response_json)
 
                         _LOGGER.error("%s failed: %s", command, repr_request_body)
                         raise IT600CommandError(
-                            f"iT600 gateway rejected '{command}' command with content '{repr_request_body}'"
+                            f"iT600 gateway rejected '{command}' command with content "
+                            f"'{repr_request_body}' and response '{repr_response_body}'"
                         )
 
                     return response_json
@@ -952,8 +989,10 @@ class IT600Gateway:
                     "Error occurred while communicating with iT600 gateway: "
                     "check if you have specified host/IP address correctly"
                 ) from e
+            except IT600CommandError:
+                raise
             except Exception as e:
-                _LOGGER.error("Exception. %s / %s", type(e), repr(e.args), e)
+                _LOGGER.exception("Unexpected error while communicating with iT600 gateway")
                 raise IT600CommandError(
                     "Unknown error occurred while communicating with iT600 gateway"
                 ) from e
