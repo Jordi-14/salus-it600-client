@@ -2,7 +2,7 @@
 
 import unittest
 
-from pyit600 import encryptor
+from salus_it600 import encryptor
 
 
 class TestStringMethods(unittest.TestCase):

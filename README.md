@@ -1,7 +1,9 @@
-# Python: Asynchronous client for Salus iT600 devices
+# salus-it600-client
+
+Asynchronous Python client for Salus iT600 devices.
 
 ## For end users
-See https://github.com/epoplavskis/homeassistant_salus to use this in Home Assistant.
+See https://github.com/Jordi-14/homeassistant_salus to use this in Home Assistant.
 
 FHEM users might be interested in https://github.com/dominikkarall/fhempy which provides subset of functionality.
 
@@ -12,7 +14,7 @@ This package allows you to control and monitor your Salus iT600 smart home devic
 ## Installation
 
 ```bash
-pip install pyit600
+pip install salus-it600-client
 ```
 
 ## Usage
@@ -23,6 +25,8 @@ pip install pyit600
 ### Basic example
 
 ```python
+from salus_it600.gateway import IT600Gateway
+
 async with IT600Gateway(host=args.host, euid=args.euid) as gateway:
 	await gateway.connect()
 	await gateway.poll_status()
@@ -101,3 +105,10 @@ Also check if you have "Local Wifi Mode" enabled:
 ### Contributing
 
 If you want to help to get your device supported, open GitHub issue and add your device model number and output of `main.py` program. Be sure to run this program with --debug option.
+
+## Project origin
+
+This project is a maintained fork/successor of `epoplavskis/pyit600`.
+It was renamed from the `pyit600` Python import namespace to `salus_it600`
+to avoid collisions with the original unmaintained package while preserving
+the original MIT license and attribution.

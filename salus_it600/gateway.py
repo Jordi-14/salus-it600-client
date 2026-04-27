@@ -47,7 +47,7 @@ from .exceptions import (
 )
 from .models import GatewayDevice, ClimateDevice, BinarySensorDevice, SwitchDevice, CoverDevice, SensorDevice
 
-_LOGGER = logging.getLogger("pyit600")
+_LOGGER = logging.getLogger("salus_it600")
 
 class IT600Gateway:
     def __init__(

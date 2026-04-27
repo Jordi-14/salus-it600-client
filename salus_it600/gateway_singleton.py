@@ -3,7 +3,7 @@
 import aiohttp
 import threading
 
-from pyit600 import IT600Gateway
+from salus_it600 import IT600Gateway
 
 
 class IT600GatewaySingleton:

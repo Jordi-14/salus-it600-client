@@ -4,12 +4,12 @@ import asyncio
 import logging
 import sys
 
-from pyit600.exceptions import IT600AuthenticationError, IT600ConnectionError
-from pyit600.gateway_singleton import IT600GatewaySingleton
+from salus_it600.exceptions import IT600AuthenticationError, IT600ConnectionError
+from salus_it600.gateway_singleton import IT600GatewaySingleton
 
 
 def help():
-    print("pyit600 demo app")
+    print("salus-it600-client demo app")
     print("syntax: main.py [options]")
     print("options:")
     print("   --host <gateway_ip>     ... network address of your Salus UG600 universal gateway")

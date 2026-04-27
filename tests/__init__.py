@@ -1,1 +1,1 @@
-"""Tests for pyit600."""
+"""Tests for salus-it600-client."""
