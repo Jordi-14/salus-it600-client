@@ -44,7 +44,7 @@ class BinarySensorDevice(NamedTuple):
     name: str
     unique_id: str
     is_on: bool
-    device_class: str
+    device_class: Optional[str]
     data: dict
     manufacturer: str
     model: Optional[str]

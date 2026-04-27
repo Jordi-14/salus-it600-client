@@ -44,6 +44,16 @@ from .exceptions import (
     IT600CommandError,
     IT600ConnectionError,
 )
+from .device_models import (
+    BINARY_RELAY_MODELS,
+    MODEL_FC600,
+    SKIPPED_BINARY_SENSOR_MODELS,
+    binary_sensor_device_class,
+    is_binary_sensor_summary,
+    is_sq610_model,
+    model_identifier,
+    switch_device_class,
+)
 from .models import GatewayDevice, ClimateDevice, BinarySensorDevice, SwitchDevice, CoverDevice, SensorDevice
 
 _LOGGER = logging.getLogger("salus_it600")
@@ -140,11 +150,292 @@ def _device_status_request_items(
     return request_items
 
 
-def _is_binary_sensor_summary(device: dict[str, Any]) -> bool:
-    """Return whether a readall entry describes a binary sensor."""
-    basic = device.get("sBasicS")
-    model = basic.get("ModelIdentifier") if isinstance(basic, dict) else None
-    return "sIASZS" in device or model in ["it600MINITRV", "it600Receiver"]
+def _online(device_status: dict[str, Any]) -> bool:
+    """Return whether a device is marked online in a gateway payload."""
+    return device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1
+
+
+def _firmware_version(device_status: dict[str, Any]) -> str | None:
+    """Return the common firmware version field from a gateway payload."""
+    return device_status.get("sZDO", {}).get("FirmwareVersion")
+
+
+def _common_device_args(
+    device_status: dict[str, Any],
+    unique_id: str,
+) -> dict[str, Any]:
+    """Return constructor args shared by most device models."""
+    model = model_identifier(device_status)
+    return {
+        "available": _online(device_status),
+        "name": _device_name(device_status, unique_id),
+        "unique_id": unique_id,
+        "data": device_status["data"],
+        "manufacturer": device_status.get("sBasicS", {}).get(
+            "ManufactureName",
+            "SALUS",
+        ),
+        "model": model,
+        "sw_version": _firmware_version(device_status),
+    }
+
+
+def _parse_cover_device(device_status: dict[str, Any]) -> CoverDevice | None:
+    """Parse one cover device detail payload."""
+    unique_id = device_status.get("data", {}).get("UniID")
+    if unique_id is None:
+        return None
+
+    if device_status.get("sButtonS", {}).get("Mode") == 0:
+        return None
+
+    current_position = device_status.get("sLevelS", {}).get("CurrentLevel")
+    move_to_level = device_status.get("sLevelS", {}).get("MoveToLevel_f")
+    if move_to_level is not None and len(move_to_level) >= 2:
+        set_position = int(move_to_level[:2], 16)
+    else:
+        set_position = None
+
+    return CoverDevice(
+        **_common_device_args(device_status, unique_id),
+        current_cover_position=current_position,
+        is_opening=None if set_position is None else current_position < set_position,
+        is_closing=None if set_position is None else current_position > set_position,
+        is_closed=current_position == 0,
+        supported_features=SUPPORT_OPEN | SUPPORT_CLOSE | SUPPORT_SET_POSITION,
+        device_class=None,
+    )
+
+
+def _parse_switch_device(device_status: dict[str, Any]) -> SwitchDevice | None:
+    """Parse one switch device detail payload."""
+    base_unique_id = device_status.get("data", {}).get("UniID")
+    if base_unique_id is None:
+        return None
+
+    unique_id = f"{base_unique_id}_{device_status['data']['Endpoint']}"
+    if device_status.get("sLevelS") is not None:
+        return None
+
+    is_on = device_status.get("sOnOffS", {}).get("OnOff")
+    if is_on is None:
+        return None
+
+    model = model_identifier(device_status)
+    return SwitchDevice(
+        **_common_device_args(device_status, unique_id),
+        is_on=is_on == 1,
+        device_class=switch_device_class(model),
+    )
+
+
+def _parse_sensor_device(device_status: dict[str, Any]) -> SensorDevice | None:
+    """Parse one temperature sensor detail payload."""
+    unique_id = device_status.get("data", {}).get("UniID")
+    if unique_id is None:
+        return None
+
+    temperature = device_status.get("sTempS", {}).get("MeasuredValue_x100")
+    if temperature is None:
+        return None
+
+    unique_id = f"{unique_id}_temp"
+    return SensorDevice(
+        **_common_device_args(device_status, unique_id),
+        state=temperature / 100,
+        unit_of_measurement=TEMP_CELSIUS,
+        device_class="temperature",
+    )
+
+
+def _parse_binary_sensor_device(
+    device_status: dict[str, Any],
+) -> BinarySensorDevice | None:
+    """Parse one binary sensor detail payload."""
+    unique_id = device_status.get("data", {}).get("UniID")
+    if unique_id is None:
+        return None
+
+    model = model_identifier(device_status)
+    if model in SKIPPED_BINARY_SENSOR_MODELS:
+        return None
+
+    if model in BINARY_RELAY_MODELS:
+        is_on = device_status.get("sIT600I", {}).get("RelayStatus")
+    else:
+        is_on = device_status.get("sIASZS", {}).get("ErrorIASZSAlarmed1")
+
+    if is_on is None:
+        return None
+
+    return BinarySensorDevice(
+        **_common_device_args(device_status, unique_id),
+        is_on=is_on == 1,
+        device_class=binary_sensor_device_class(model),
+    )
+
+
+def _climate_common_args(
+    device_status: dict[str, Any],
+    unique_id: str,
+) -> dict[str, Any]:
+    """Return constructor args shared by climate devices."""
+    return {
+        **_common_device_args(device_status, unique_id),
+        "temperature_unit": TEMP_CELSIUS,
+        "precision": 0.1,
+        "device_class": "temperature",
+    }
+
+
+def _parse_it600th_climate_device(
+    device_status: dict[str, Any],
+    unique_id: str,
+    th: dict[str, Any],
+) -> ClimateDevice:
+    """Parse one standard iT600 thermostat detail payload."""
+    model = model_identifier(device_status)
+    current_humidity = (
+        th.get("SunnySetpoint_x100") if is_sq610_model(model) else None
+    )
+    hold_type = _hold_type(th, unique_id)
+    running_state = th.get("RunningState", DEFAULT_RUNNING_STATE)
+    return ClimateDevice(
+        **_climate_common_args(device_status, unique_id),
+        current_humidity=current_humidity,
+        current_temperature=th["LocalTemperature_x100"] / 100,
+        target_temperature=th["HeatingSetpoint_x100"] / 100,
+        max_temp=th.get("MaxHeatSetpoint_x100", 3500) / 100,
+        min_temp=th.get("MinHeatSetpoint_x100", 500) / 100,
+        hvac_mode=HVAC_MODE_OFF
+        if hold_type == 7
+        else HVAC_MODE_HEAT
+        if hold_type == 2
+        else HVAC_MODE_AUTO,
+        hvac_action=CURRENT_HVAC_OFF
+        if hold_type == 7
+        else CURRENT_HVAC_IDLE
+        if running_state % 2 == 0
+        else CURRENT_HVAC_HEAT,
+        hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+        preset_mode=PRESET_OFF
+        if hold_type == 7
+        else PRESET_PERMANENT_HOLD
+        if hold_type == 2
+        else PRESET_FOLLOW_SCHEDULE,
+        preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
+        fan_mode=None,
+        fan_modes=None,
+        locked=None,
+        supported_features=SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE,
+    )
+
+
+def _parse_fan_coil_climate_device(
+    device_status: dict[str, Any],
+    unique_id: str,
+    ther: dict[str, Any],
+    scomm: dict[str, Any],
+    sfans: dict[str, Any],
+) -> ClimateDevice:
+    """Parse one FC600 fan-coil thermostat detail payload."""
+    is_heating = ther["SystemMode"] == 4
+    fan_mode = sfans.get("FanMode", 5)
+    hold_type = _hold_type(scomm, unique_id)
+    running_state = ther.get("RunningState", DEFAULT_RUNNING_STATE)
+
+    return ClimateDevice(
+        **_climate_common_args(device_status, unique_id),
+        current_humidity=None,
+        current_temperature=ther["LocalTemperature_x100"] / 100,
+        target_temperature=(ther["HeatingSetpoint_x100"] / 100)
+        if is_heating
+        else (ther["CoolingSetpoint_x100"] / 100),
+        max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / 100)
+        if is_heating
+        else (ther.get("MaxCoolSetpoint_x100", 4000) / 100),
+        min_temp=(ther.get("MinHeatSetpoint_x100", 500) / 100)
+        if is_heating
+        else (ther.get("MinCoolSetpoint_x100", 500) / 100),
+        hvac_mode=HVAC_MODE_HEAT
+        if ther["SystemMode"] == 4
+        else HVAC_MODE_COOL
+        if ther["SystemMode"] == 3
+        else HVAC_MODE_AUTO,
+        hvac_action=CURRENT_HVAC_OFF
+        if hold_type == 7
+        else CURRENT_HVAC_IDLE
+        if running_state == 0
+        else CURRENT_HVAC_HEAT
+        if is_heating and running_state == 33
+        else CURRENT_HVAC_HEAT_IDLE
+        if is_heating
+        else CURRENT_HVAC_COOL
+        if running_state == 66
+        else CURRENT_HVAC_COOL_IDLE,
+        hvac_modes=[HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO],
+        preset_mode=PRESET_OFF
+        if hold_type == 7
+        else PRESET_PERMANENT_HOLD
+        if hold_type == 2
+        else PRESET_ECO
+        if hold_type == 10
+        else PRESET_TEMPORARY_HOLD
+        if hold_type == 1
+        else PRESET_FOLLOW_SCHEDULE,
+        preset_modes=[
+            PRESET_OFF,
+            PRESET_PERMANENT_HOLD,
+            PRESET_ECO,
+            PRESET_TEMPORARY_HOLD,
+            PRESET_FOLLOW_SCHEDULE,
+        ],
+        fan_mode=FAN_MODE_OFF
+        if fan_mode == 0
+        else FAN_MODE_HIGH
+        if fan_mode == 3
+        else FAN_MODE_MEDIUM
+        if fan_mode == 2
+        else FAN_MODE_LOW
+        if fan_mode == 1
+        else FAN_MODE_AUTO,
+        fan_modes=[
+            FAN_MODE_AUTO,
+            FAN_MODE_HIGH,
+            FAN_MODE_MEDIUM,
+            FAN_MODE_LOW,
+            FAN_MODE_OFF,
+        ],
+        locked=device_status.get("sTherUIS", {}).get("LockKey", 0) == 1,
+        supported_features=(
+            SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE | SUPPORT_FAN_MODE
+        ),
+    )
+
+
+def _parse_climate_device(device_status: dict[str, Any]) -> ClimateDevice | None:
+    """Parse one climate device detail payload."""
+    unique_id = device_status.get("data", {}).get("UniID")
+    if unique_id is None:
+        return None
+
+    th = device_status.get("sIT600TH")
+    if isinstance(th, dict):
+        return _parse_it600th_climate_device(device_status, unique_id, th)
+
+    ther = device_status.get("sTherS")
+    scomm = device_status.get("sComm")
+    sfans = device_status.get("sFanS")
+    if isinstance(ther, dict) and isinstance(scomm, dict) and isinstance(sfans, dict):
+        return _parse_fan_coil_climate_device(
+            device_status,
+            unique_id,
+            ther,
+            scomm,
+            sfans,
+        )
+
+    return None
 
 
 class IT600Gateway:
@@ -255,7 +546,7 @@ class IT600Gateway:
         )
         await self._refresh_climate_devices(climate_devices, send_callback)
 
-        binary_sensors = list(filter(_is_binary_sensor_summary, device_items))
+        binary_sensors = list(filter(is_binary_sensor_summary, device_items))
         await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
 
         sensors = list(
@@ -272,6 +563,60 @@ class IT600Gateway:
             filter(lambda x: "sLevelS" in x, device_items)
         )
         await self._refresh_cover_devices(covers, send_callback)
+
+    async def _refresh_device_collection(
+        self,
+        devices: List[Any],
+        device_type: str,
+        state_attr: str,
+        parser: Callable[[dict[str, Any]], Any | None],
+        callback: Callable[..., Awaitable[None]],
+        send_callback: bool = False,
+    ) -> None:
+        """Refresh one device collection using a parser for that device type."""
+        local_devices = {}
+
+        if devices:
+            request_items = _device_status_request_items(devices, device_type)
+            if request_items:
+                status = await self._make_encrypted_request(
+                    "read",
+                    {
+                        "requestAttr": "deviceid",
+                        "id": request_items
+                    }
+                )
+
+                for device_status in _response_items(
+                    status,
+                    f"{device_type} device detail",
+                ):
+                    unique_id = device_status.get("data", {}).get("UniID")
+                    try:
+                        device = parser(device_status)
+                    except PARSING_EXCEPTIONS:
+                        _LOGGER.exception(
+                            "Failed to parse %s device %s",
+                            device_type,
+                            unique_id,
+                        )
+                        continue
+
+                    if device is None:
+                        continue
+
+                    local_devices[device.unique_id] = device
+
+                    if send_callback:
+                        getattr(self, state_attr)[device.unique_id] = device
+                        await callback(device_id=device.unique_id)
+
+        setattr(self, state_attr, local_devices)
+        _LOGGER.debug(
+            "Refreshed %s %s devices",
+            len(local_devices),
+            device_type,
+        )
 
     async def _refresh_gateway_device(self, devices: List[Any], send_callback=False):
         local_device: Optional[GatewayDevice] = None
@@ -314,355 +659,54 @@ class IT600Gateway:
             _LOGGER.debug("Refreshed gateway device")
 
     async def _refresh_cover_devices(self, devices: List[Any], send_callback=False):
-        local_devices = {}
-
-        if devices:
-            request_items = _device_status_request_items(devices, "cover")
-            if not request_items:
-                self._cover_devices = local_devices
-                return
-
-            status = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "deviceid",
-                    "id": request_items
-                }
-            )
-
-            for device_status in _response_items(status, "cover device detail"):
-                unique_id = device_status.get("data", {}).get("UniID", None)
-
-                if unique_id is None:
-                    continue
-
-                try:
-                    if device_status.get("sButtonS", {}).get("Mode", None) == 0:
-                        continue  # Skip endpoints which are disabled
-
-                    model: Optional[str] = device_status.get("DeviceL", {}).get("ModelIdentifier_i", None)
-
-                    current_position = device_status.get("sLevelS", {}).get("CurrentLevel", None)
-
-                    move_to_level_f = device_status.get("sLevelS", {}).get("MoveToLevel_f", None)
-
-                    if move_to_level_f is not None and len(move_to_level_f) >= 2:
-                        set_position = int(move_to_level_f[:2], 16)
-                    else:
-                        set_position = None
-
-                    device = CoverDevice(
-                        available=True if device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1 else False,
-                        name=json.loads(device_status.get("sZDO", {}).get("DeviceName", '{"deviceName": "Unknown"}'))["deviceName"],
-                        unique_id=unique_id,
-                        current_cover_position=current_position,
-                        is_opening=None if set_position is None else current_position < set_position,
-                        is_closing=None if set_position is None else current_position > set_position,
-                        is_closed=True if current_position == 0 else False,
-                        supported_features=SUPPORT_OPEN | SUPPORT_CLOSE | SUPPORT_SET_POSITION,
-                        device_class=None,
-                        data=device_status["data"],
-                        manufacturer=device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
-                        model=model,
-                        sw_version=device_status.get("sZDO", {}).get("FirmwareVersion", None)
-                    )
-
-                    local_devices[device.unique_id] = device
-
-                    if send_callback:
-                        self._cover_devices[device.unique_id] = device
-                        await self._send_cover_update_callback(device_id=device.unique_id)
-                except PARSING_EXCEPTIONS:
-                    _LOGGER.exception("Failed to poll device %s", unique_id)
-
-            self._cover_devices = local_devices
-            _LOGGER.debug("Refreshed %s cover devices", len(self._cover_devices))
+        await self._refresh_device_collection(
+            devices,
+            "cover",
+            "_cover_devices",
+            _parse_cover_device,
+            self._send_cover_update_callback,
+            send_callback,
+        )
 
     async def _refresh_switch_devices(self, devices: List[Any], send_callback=False):
-        local_devices = {}
-
-        if devices:
-            request_items = _device_status_request_items(devices, "switch")
-            if not request_items:
-                self._switch_devices = local_devices
-                return
-
-            status = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "deviceid",
-                    "id": request_items
-                }
-            )
-
-            for device_status in _response_items(status, "switch device detail"):
-                unique_id = device_status.get("data", {}).get("UniID", None)
-
-                if unique_id is None:
-                    continue
-
-                try:
-                    unique_id = unique_id + "_" + str(device_status["data"]["Endpoint"])  # Double switches have a different endpoint id, but the same device id
-
-                    if device_status.get("sLevelS", None) is not None:
-                        continue  # Skip roller shutter endpoint in combined roller shutter/relay device
-
-                    is_on: Optional[bool] = device_status.get("sOnOffS", {}).get("OnOff", None)
-
-                    if is_on is None:
-                        continue
-
-                    model: Optional[str] = device_status.get("DeviceL", {}).get("ModelIdentifier_i", None)
-
-                    device = SwitchDevice(
-                        available=True if device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1 else False,
-                        name=json.loads(device_status.get("sZDO", {}).get("DeviceName", '{"deviceName": ' + json.dumps(unique_id) + '}'))["deviceName"],
-                        unique_id=unique_id,
-                        is_on=True if is_on == 1 else False,
-                        device_class="outlet" if (model == "SP600" or model == "SPE600") else "switch",
-                        data=device_status["data"],
-                        manufacturer=device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
-                        model=model,
-                        sw_version=device_status.get("sZDO", {}).get("FirmwareVersion", None)
-                    )
-
-                    local_devices[device.unique_id] = device
-
-                    if send_callback:
-                        self._switch_devices[device.unique_id] = device
-                        await self._send_switch_update_callback(device_id=device.unique_id)
-                except PARSING_EXCEPTIONS:
-                    _LOGGER.exception("Failed to poll device %s", unique_id)
-
-            self._switch_devices = local_devices
-            _LOGGER.debug("Refreshed %s sensor devices", len(self._switch_devices))
+        await self._refresh_device_collection(
+            devices,
+            "switch",
+            "_switch_devices",
+            _parse_switch_device,
+            self._send_switch_update_callback,
+            send_callback,
+        )
 
     async def _refresh_sensor_devices(self, devices: List[Any], send_callback=False):
-        local_devices = {}
-
-        if devices:
-            request_items = _device_status_request_items(devices, "sensor")
-            if not request_items:
-                self._sensor_devices = local_devices
-                return
-
-            status = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "deviceid",
-                    "id": request_items
-                }
-            )
-
-            for device_status in _response_items(status, "sensor device detail"):
-                unique_id = device_status.get("data", {}).get("UniID", None)
-
-                if unique_id is None:
-                    continue
-
-                try:
-                    temperature: Optional[int] = device_status.get("sTempS", {}).get("MeasuredValue_x100", None)
-
-                    if temperature is None:
-                        continue
-
-                    unique_id = unique_id + "_temp"  # Some sensors also measure temperature besides their primary function (eg. SW600)
-
-                    model: Optional[str] = device_status.get("DeviceL", {}).get("ModelIdentifier_i", None)
-
-                    device = SensorDevice(
-                        available=True if device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1 else False,
-                        name=json.loads(device_status.get("sZDO", {}).get("DeviceName", '{"deviceName": "Unknown"}'))["deviceName"],
-                        unique_id=unique_id,
-                        state=(temperature / 100),
-                        unit_of_measurement=TEMP_CELSIUS,
-                        device_class="temperature",
-                        data=device_status["data"],
-                        manufacturer=device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
-                        model=model,
-                        sw_version=device_status.get("sZDO", {}).get("FirmwareVersion", None)
-                    )
-
-                    local_devices[device.unique_id] = device
-
-                    if send_callback:
-                        self._sensor_devices[device.unique_id] = device
-                        await self._send_sensor_update_callback(device_id=device.unique_id)
-                except PARSING_EXCEPTIONS:
-                    _LOGGER.exception("Failed to poll device %s", unique_id)
-
-            self._sensor_devices = local_devices
-            _LOGGER.debug("Refreshed %s sensor devices", len(self._sensor_devices))
+        await self._refresh_device_collection(
+            devices,
+            "sensor",
+            "_sensor_devices",
+            _parse_sensor_device,
+            self._send_sensor_update_callback,
+            send_callback,
+        )
 
     async def _refresh_binary_sensor_devices(self, devices: List[Any], send_callback=False):
-        local_devices = {}
-
-        if devices:
-            request_items = _device_status_request_items(devices, "binary sensor")
-            if not request_items:
-                self._binary_sensor_devices = local_devices
-                return
-
-            status = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "deviceid",
-                    "id": request_items
-                }
-            )
-
-            for device_status in _response_items(status, "binary sensor device detail"):
-                unique_id = device_status.get("data", {}).get("UniID", None)
-
-                if unique_id is None:
-                    continue
-
-                try:
-                    model: Optional[str] = device_status.get("DeviceL", {}).get("ModelIdentifier_i", None)
-                    if model in ["it600MINITRV", "it600Receiver"]:
-                        is_on: Optional[bool] = device_status.get("sIT600I", {}).get("RelayStatus", None)
-                    else:
-                        is_on: Optional[bool] = device_status.get("sIASZS", {}).get("ErrorIASZSAlarmed1", None)
-
-                    if is_on is None:
-                        continue
-
-                    if model == "SB600":
-                        continue  # Skip button
-
-                    device = BinarySensorDevice(
-                        available=True if device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1 else False,
-                        name=json.loads(device_status.get("sZDO", {}).get("DeviceName", '{"deviceName": "Unknown"}'))["deviceName"],
-                        unique_id=device_status["data"]["UniID"],
-                        is_on=True if is_on == 1 else False,
-                        device_class="window" if (model == "SW600" or model == "OS600") else
-                            "moisture" if model == "WLS600" else
-                            "smoke" if model == "SmokeSensor-EM" else
-                            "valve" if model == "it600MINITRV" else
-                            "receiver" if model == "it600Receiver" else
-                            None,
-                        data=device_status["data"],
-                        manufacturer=device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
-                        model=model,
-                        sw_version=device_status.get("sZDO", {}).get("FirmwareVersion", None)
-                    )
-
-                    local_devices[device.unique_id] = device
-
-                    if send_callback:
-                        self._binary_sensor_devices[device.unique_id] = device
-                        await self._send_binary_sensor_update_callback(device_id=device.unique_id)
-                except PARSING_EXCEPTIONS:
-                    _LOGGER.exception("Failed to poll device %s", unique_id)
-
-            self._binary_sensor_devices = local_devices
-            _LOGGER.debug("Refreshed %s binary sensor devices", len(self._binary_sensor_devices))
+        await self._refresh_device_collection(
+            devices,
+            "binary sensor",
+            "_binary_sensor_devices",
+            _parse_binary_sensor_device,
+            self._send_binary_sensor_update_callback,
+            send_callback,
+        )
 
     async def _refresh_climate_devices(self, devices: List[Any], send_callback=False):
-        local_devices = {}
-
-        if devices:
-            request_items = _device_status_request_items(devices, "climate")
-            if not request_items:
-                self._climate_devices = local_devices
-                return
-
-            status = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "deviceid",
-                    "id": request_items
-                }
-            )
-
-            for device_status in _response_items(status, "climate device detail"):
-                unique_id = device_status.get("data", {}).get("UniID", None)
-
-                if unique_id is None:
-                    continue
-
-                try:
-                    model: Optional[str] = device_status.get("DeviceL", {}).get("ModelIdentifier_i", None)
-
-                    th = device_status.get("sIT600TH", None)
-                    ther = device_status.get("sTherS", None)
-                    scomm = device_status.get("sComm", None)
-                    sfans = device_status.get("sFanS", None)
-
-                    global_args = {
-                        "available": True if device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1 else False,
-                        "name": _device_name(device_status, unique_id),
-                        "unique_id": unique_id,
-                        "temperature_unit": TEMP_CELSIUS,  # API always reports temperature as celsius
-                        "precision": 0.1,
-                        "device_class": "temperature",
-                        "data": device_status["data"],
-                        "manufacturer": device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
-                        "model": model,
-                        "sw_version": device_status.get("sZDO", {}).get("FirmwareVersion", None),
-                    }
-
-                    if th is not None:
-                        current_humidity: Optional[float] = None
-
-                        if model is not None and "SQ610" in model:
-                            current_humidity = th.get("SunnySetpoint_x100", None)  # Quantum thermostats store humidity there, other thermostats store there one of the setpoint temperatures
-
-                        hold_type = _hold_type(th, unique_id)
-                        running_state = th.get("RunningState", DEFAULT_RUNNING_STATE)
-                        device = ClimateDevice(
-                            **global_args,
-                            current_humidity=current_humidity,
-                            current_temperature=th["LocalTemperature_x100"] / 100,
-                            target_temperature=th["HeatingSetpoint_x100"] / 100,
-                            max_temp=th.get("MaxHeatSetpoint_x100", 3500) / 100,
-                            min_temp=th.get("MinHeatSetpoint_x100", 500) / 100,
-                            hvac_mode=HVAC_MODE_OFF if hold_type == 7 else HVAC_MODE_HEAT if hold_type == 2 else HVAC_MODE_AUTO,
-                            hvac_action=CURRENT_HVAC_OFF if hold_type == 7 else CURRENT_HVAC_IDLE if running_state % 2 == 0 else CURRENT_HVAC_HEAT,  # RunningState 0 or 128 => idle, 1 or 129 => heating
-                            hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
-                            preset_mode=PRESET_OFF if hold_type == 7 else PRESET_PERMANENT_HOLD if hold_type == 2 else PRESET_FOLLOW_SCHEDULE,
-                            preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
-                            fan_mode=None,
-                            fan_modes=None,
-                            locked=None,
-                            supported_features=SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE,
-                        )
-                    elif ther is not None and scomm is not None and sfans is not None:
-                        is_heating: bool = (ther["SystemMode"] == 4)
-                        fan_mode: int = sfans.get("FanMode", 5)
-                        hold_type = _hold_type(scomm, unique_id)
-                        running_state = ther.get("RunningState", DEFAULT_RUNNING_STATE)
-
-                        device = ClimateDevice(
-                            **global_args,
-                            current_humidity=None,
-                            current_temperature=ther["LocalTemperature_x100"] / 100,
-                            target_temperature=(ther["HeatingSetpoint_x100"] / 100) if is_heating else (ther["CoolingSetpoint_x100"] / 100),
-                            max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / 100) if is_heating else (ther.get("MaxCoolSetpoint_x100", 4000) / 100),
-                            min_temp=(ther.get("MinHeatSetpoint_x100", 500) / 100) if is_heating else (ther.get("MinCoolSetpoint_x100", 500) / 100),
-                            hvac_mode=HVAC_MODE_HEAT if ther["SystemMode"] == 4 else HVAC_MODE_COOL if ther["SystemMode"] == 3 else HVAC_MODE_AUTO,
-                            hvac_action=CURRENT_HVAC_OFF if hold_type == 7 else CURRENT_HVAC_IDLE if running_state == 0 else CURRENT_HVAC_HEAT if is_heating and running_state == 33 else CURRENT_HVAC_HEAT_IDLE if is_heating else CURRENT_HVAC_COOL if running_state == 66 else CURRENT_HVAC_COOL_IDLE,
-                            hvac_modes=[HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO],
-                            preset_mode=PRESET_OFF if hold_type == 7 else PRESET_PERMANENT_HOLD if hold_type == 2 else PRESET_ECO if hold_type == 10 else PRESET_TEMPORARY_HOLD if hold_type == 1 else PRESET_FOLLOW_SCHEDULE,
-                            preset_modes=[PRESET_OFF, PRESET_PERMANENT_HOLD, PRESET_ECO, PRESET_TEMPORARY_HOLD, PRESET_FOLLOW_SCHEDULE],
-                            fan_mode=FAN_MODE_OFF if fan_mode == 0 else FAN_MODE_HIGH if fan_mode == 3 else FAN_MODE_MEDIUM if fan_mode == 2 else FAN_MODE_LOW if fan_mode == 1 else FAN_MODE_AUTO, # fan_mode == 5 => FAN_MODE_AUTO
-                            fan_modes=[FAN_MODE_AUTO, FAN_MODE_HIGH, FAN_MODE_MEDIUM, FAN_MODE_LOW, FAN_MODE_OFF],
-                            locked=True if device_status.get("sTherUIS", {}).get("LockKey", 0) == 1 else False,
-                            supported_features=SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE | SUPPORT_FAN_MODE,
-                        )
-                    else:
-                        continue
-
-                    local_devices[device.unique_id] = device
-
-                    if send_callback:
-                        self._climate_devices[device.unique_id] = device
-                        await self._send_climate_update_callback(device_id=device.unique_id)
-                except PARSING_EXCEPTIONS:
-                    _LOGGER.exception("Failed to poll device %s", unique_id)
-
-        self._climate_devices = local_devices
-        _LOGGER.debug("Refreshed %s climate devices", len(self._climate_devices))
+        await self._refresh_device_collection(
+            devices,
+            "climate",
+            "_climate_devices",
+            _parse_climate_device,
+            self._send_climate_update_callback,
+            send_callback,
+        )
 
     async def _send_climate_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
@@ -858,7 +902,7 @@ class IT600Gateway:
             _LOGGER.error("Cannot set mode: climate device not found with the specified id: %s", device_id)
             return
 
-        if device.model == 'FC600':
+        if device.model == MODEL_FC600:
             request_data = { "sComm": { "SetHoldType": 7 if preset == PRESET_OFF else 10 if preset == PRESET_ECO else 2 if preset == PRESET_PERMANENT_HOLD else 1 if preset == PRESET_TEMPORARY_HOLD else 0 } }
         else:
             request_data = { "sIT600TH": { "SetHoldType": 7 if preset == PRESET_OFF else 2 if preset == PRESET_PERMANENT_HOLD else 0 } }
@@ -885,7 +929,7 @@ class IT600Gateway:
             _LOGGER.error("Cannot set mode: device not found with the specified id: %s", device_id)
             return
 
-        if device.model == 'FC600':
+        if device.model == MODEL_FC600:
             request_data = { "sTherS": { "SetSystemMode": 4 if mode == HVAC_MODE_HEAT else 3 if mode == HVAC_MODE_COOL else HVAC_MODE_AUTO } }
         else:
             request_data = { "sIT600TH": { "SetHoldType": 7 if mode == HVAC_MODE_OFF else 0 } }
@@ -960,7 +1004,7 @@ class IT600Gateway:
             _LOGGER.error("Cannot set mode: climate device not found with the specified id: %s", device_id)
             return
 
-        if device.model == 'FC600':
+        if device.model == MODEL_FC600:
           if device.hvac_mode == HVAC_MODE_COOL:
               request_data = { "sTherS": { "SetCoolingSetpoint_x100": int(self.round_to_half(setpoint_celsius) * 100) } }
           else:
