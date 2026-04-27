@@ -181,7 +181,27 @@ def _common_device_args(
 
 
 def _parse_cover_device(device_status: dict[str, Any]) -> CoverDevice | None:
-    """Parse one cover device detail payload."""
+    """Parse one cover (roller shutter/blind) device from gateway payload.
+    
+    Extracts position, movement state, and capability info from cover-specific
+    protocol fields. Skips endpoints disabled via sButtonS.Mode.
+    
+    Protocol fields:
+    - `sLevelS.CurrentLevel`: Current position (0-100), 0=closed, 100=open
+    - `sLevelS.MoveToLevel_f`: Target position as hex string (first 2 chars)
+    - `sButtonS.Mode`: Endpoint enabled state (0=disabled)
+    
+    Args:
+        device_status: Cover device detail dict from gateway
+    
+    Returns:
+        CoverDevice model instance or None if:
+        - No UniID
+        - Endpoint disabled (Mode==0)
+    
+    Raises:
+        PARSING_EXCEPTIONS: If required fields missing/invalid (caught upstream)
+    """
     unique_id = device_status.get("data", {}).get("UniID")
     if unique_id is None:
         return None
@@ -208,7 +228,30 @@ def _parse_cover_device(device_status: dict[str, Any]) -> CoverDevice | None:
 
 
 def _parse_switch_device(device_status: dict[str, Any]) -> SwitchDevice | None:
-    """Parse one switch device detail payload."""
+    """Parse one switch (relay) device from gateway payload.
+    
+    Handles single and multi-endpoint switches. Multi-endpoint switches are
+    tracked with endpoint suffix in unique_id (e.g. "device-1_1" for endpoint 1).
+    Skips endpoints that are dimmers (have sLevelS).
+    
+    Protocol fields:
+    - `data.UniID`: Base device identifier
+    - `data.Endpoint`: Endpoint number (multi-endpoint devices)
+    - `sOnOffS.OnOff`: Relay state (0=off, 1=on)
+    - `sLevelS`: Present if dimmer (skip this endpoint)
+    
+    Args:
+        device_status: Switch device detail dict from gateway
+    
+    Returns:
+        SwitchDevice model instance or None if:
+        - No UniID
+        - Is dimmer (has sLevelS)
+        - OnOff field missing
+    
+    Raises:
+        PARSING_EXCEPTIONS: If required fields invalid (caught upstream)
+    """
     base_unique_id = device_status.get("data", {}).get("UniID")
     if base_unique_id is None:
         return None
@@ -230,7 +273,26 @@ def _parse_switch_device(device_status: dict[str, Any]) -> SwitchDevice | None:
 
 
 def _parse_sensor_device(device_status: dict[str, Any]) -> SensorDevice | None:
-    """Parse one temperature sensor detail payload."""
+    """Parse one temperature sensor device from gateway payload.
+    
+    Extracts temperature measurement and sensor metadata. Some devices measure
+    temperature as secondary capability (e.g. SW600 window sensor with temp),
+    so unique_id is suffixed with "_temp" to avoid collision.
+    
+    Protocol fields:
+    - `sTempS.MeasuredValue_x100`: Temperature in 1/100ths of degree (e.g. 2150 = 21.5°C)
+    
+    Args:
+        device_status: Temperature sensor detail dict from gateway
+    
+    Returns:
+        SensorDevice model instance or None if:
+        - No UniID
+        - MeasuredValue_x100 field missing
+    
+    Raises:
+        PARSING_EXCEPTIONS: If required fields invalid (caught upstream)
+    """
     unique_id = device_status.get("data", {}).get("UniID")
     if unique_id is None:
         return None
@@ -251,7 +313,30 @@ def _parse_sensor_device(device_status: dict[str, Any]) -> SensorDevice | None:
 def _parse_binary_sensor_device(
     device_status: dict[str, Any],
 ) -> BinarySensorDevice | None:
-    """Parse one binary sensor detail payload."""
+    """Parse one binary sensor device from gateway payload.
+    
+    Handles two classes of binary sensors:
+    1. Standard IAS Zone Cluster (sIASZS): Contact/smoke/motion sensors
+    2. Binary relay models (MINITRV, Receiver): Single relay state
+    
+    Some models (SB600 button) are filtered out and return None.
+    
+    Protocol fields:
+    - `sIASZS.ErrorIASZSAlarmed1`: Alarm state for standard sensors (0/1)
+    - `sIT600I.RelayStatus`: Relay state for MINITRV/Receiver (0/1)
+    
+    Args:
+        device_status: Binary sensor detail dict from gateway
+    
+    Returns:
+        BinarySensorDevice model instance or None if:
+        - No UniID
+        - Model in SKIPPED_BINARY_SENSOR_MODELS (e.g. SB600)
+        - Required state field missing
+    
+    Raises:
+        PARSING_EXCEPTIONS: If required fields invalid (caught upstream)
+    """
     unique_id = device_status.get("data", {}).get("UniID")
     if unique_id is None:
         return None
@@ -293,7 +378,38 @@ def _parse_it600th_climate_device(
     unique_id: str,
     th: dict[str, Any],
 ) -> ClimateDevice:
-    """Parse one standard iT600 thermostat detail payload."""
+    """Parse one iT600 or SQ610 thermostat from gateway payload.
+    
+    Handles both standard iT600TH thermostats (heating-only) and SQ610 Quantum
+    thermostats (heating/cooling with extended controls).
+    
+    SQ610-specific behavior:
+    - Humidity read from SunnySetpoint_x100 field (divide by 100)
+    - Auto/Permanent/Standby hold modes (0/2/7)
+    - No fan mode support (always None)
+    
+    Standard iT600 behavior:
+    - Heat-only mode (no cooling)
+    - Simple hold modes: Off/Heat/Auto (7/2/0)
+    
+    Protocol fields:
+    - `sIT600TH.LocalTemperature_x100`: Current temperature (divide by 100)
+    - `sIT600TH.HeatingSetpoint_x100`: Target temperature (divide by 100)
+    - `sIT600TH.HoldType`: Preset mode (0=auto, 2=permanent, 7=off)
+    - `sIT600TH.RunningState`: Active state (even=idle, odd=heating)
+    - `sIT600TH.SunnySetpoint_x100`: Humidity for SQ610 (divide by 100)
+    
+    Args:
+        device_status: Full device detail dict from gateway
+        unique_id: Device UniID
+        th: The sIT600TH section of device_status
+    
+    Returns:
+        ClimateDevice model with appropriate mode/preset for this model variant
+    
+    Raises:
+        KeyError: If required sIT600TH fields missing (caught as PARSING_EXCEPTIONS)
+    """
     model = model_identifier(device_status)
     current_humidity = (
         th.get("SunnySetpoint_x100") if is_sq610_model(model) else None
@@ -338,7 +454,37 @@ def _parse_fan_coil_climate_device(
     scomm: dict[str, Any],
     sfans: dict[str, Any],
 ) -> ClimateDevice:
-    """Parse one FC600 fan-coil thermostat detail payload."""
+    """Parse one FC600 fan-coil thermostat from gateway payload.
+    
+    FC600 thermostats use a different protocol structure than iT600TH:
+    - Separate heating/cooling setpoints (sTherS.HeatingSetpoint_x100 and
+      sTherS.CoolingSetpoint_x100) depending on SystemMode
+    - Hold type in sComm section instead of sTherS
+    - Fan mode in sFanS section
+    - Support for heating, cooling, and auto modes
+    
+    Protocol fields:
+    - `sTherS.LocalTemperature_x100`: Current temperature (divide by 100)
+    - `sTherS.HeatingSetpoint_x100`: Target when heating (divide by 100)
+    - `sTherS.CoolingSetpoint_x100`: Target when cooling (divide by 100)
+    - `sTherS.SystemMode`: Mode (3=cool, 4=heat, else auto)
+    - `sComm.SetHoldType`: Preset mode (0=follow, 1=temp hold, 2=permanent, 7=off, 10=eco)
+    - `sFanS.FanMode`: Fan speed (0=off, 1=low, 2=medium, 3=high, 5=auto)
+    - `sTherS.RunningState`: Active state (0=idle, 33=heat, 66=cool)
+    
+    Args:
+        device_status: Full device detail dict from gateway
+        unique_id: Device UniID
+        ther: The sTherS section of device_status (with setpoints, mode, running state)
+        scomm: The sComm section of device_status (with hold type)
+        sfans: The sFanS section of device_status (with fan mode)
+    
+    Returns:
+        ClimateDevice model with dual mode (heating/cooling) support
+    
+    Raises:
+        KeyError: If required fields missing (caught as PARSING_EXCEPTIONS)
+    """
     is_heating = ther["SystemMode"] == 4
     fan_mode = sfans.get("FanMode", 5)
     hold_type = _hold_type(scomm, unique_id)
@@ -573,7 +719,45 @@ class IT600Gateway:
         callback: Callable[..., Awaitable[None]],
         send_callback: bool = False,
     ) -> None:
-        """Refresh one device collection using a parser for that device type."""
+        """Refresh one device collection using a parser for that device type.
+        
+        This is the consolidated pipeline for all device type refreshes. It:
+        1. Checks if there are devices of this type to poll
+        2. Makes encrypted gateway request for device details
+        3. Validates response structure
+        4. Parses each device using the provided parser function
+        5. Skips devices that return None (invalid or filtered out)
+        6. Catches parsing errors, logs them, and continues
+        7. Stores device state in internal dict (gateway._<type>_devices)
+        8. Optionally triggers update callbacks
+        
+        This consolidation eliminates ~60% code duplication across the original
+        separate _refresh_*_devices methods while keeping device-type-specific
+        logic isolated in parser functions.
+        
+        Args:
+            devices: List of device summary dicts from readall response
+            device_type: Human-readable name for logging (e.g. "switch", "cover")
+            state_attr: Internal gateway attribute name (e.g. "_switch_devices")
+            parser: Function that parses device_status dict -> Device model or None.
+                    Should catch and re-raise PARSING_EXCEPTIONS, or return None
+                    for intentionally filtered devices (e.g. disabled endpoints).
+            callback: Async callback function to invoke if send_callback=True.
+                      Called with device_id argument.
+            send_callback: If True, invoke callback for each parsed device.
+                          Usually False during poll_status (callback sent once
+                          after all types polled), True during discovery.
+        
+        Raises:
+            IT600ConnectionError: If gateway request fails (propagates up)
+            IT600CommandError: If response validation fails
+        
+        Example:
+            To add a new device type (e.g. "dimmer"):
+            1. Add parser function `_parse_dimmer_device()`
+            2. Add filter in `poll_status()` to find dimmer devices
+            3. Call `_refresh_device_collection()` with the filter results
+        """
         local_devices = {}
 
         if devices:

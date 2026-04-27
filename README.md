@@ -122,6 +122,215 @@ Also check if you have "Local Wifi Mode" enabled:
 * Restart Gateway by unplugging/plugging USB power
 
 
+## Extending Device Support
+
+### Architecture Overview
+
+Device detection and parsing uses a layered pipeline:
+
+```
+poll_status() readall request
+    ↓
+Extract device-type-specific summaries (lambda filters)
+    ↓
+For each type: _refresh_device_collection()
+    ├─ Make "deviceid" request for detailed payloads
+    ├─ Validate gateway response
+    ├─ Call type-specific parser for each device
+    ├─ Catch parsing errors, log, continue
+    └─ Update internal device dicts + callbacks
+```
+
+Device models are identified by **protocol signatures** in the JSON payloads:
+
+- **Climate**: `sIT600TH` or `sTherS` section present
+- **Binary sensor**: `sIASZS` section, or model in `BINARY_RELAY_MODELS`
+- **Sensor**: `sTempS.MeasuredValue_x100` present
+- **Switch**: `sOnOffS.OnOff` present
+- **Cover**: `sLevelS.CurrentLevel` present
+
+### Adding a New Device Model
+
+#### Step 1: Identify Protocol Signature
+
+Use `main.py --debug` to capture a readall response. Find your device in the JSON output and note which payload sections it contains.
+
+Example: A window contact sensor contains `sIASZS.ErrorIASZSAlarmed1` → binary sensor.
+
+#### Step 2: Add Model to Registry
+
+Edit `salus_it600/device_models.py`:
+
+```python
+# Define model identifier
+MODEL_MYDEVICE = "MyDevice123"
+
+# Add to classification if needed
+BINARY_SENSOR_DEVICE_CLASSES = {
+    # ...existing...
+    MODEL_MYDEVICE: "custom_class",  # Use Home Assistant device class
+}
+```
+
+#### Step 3: Create Parser Function
+
+Add to `salus_it600/gateway.py`:
+
+```python
+def _parse_mydevice_device(device_status: dict[str, Any]) -> MyDeviceModel | None:
+    """Parse one MyDevice from gateway payload.
+    
+    Protocol fields:
+    - `MyPayloadSection.StateField`: What this means (divide by what)
+    
+    Returns:
+        MyDeviceModel or None if invalid/filtered
+    """
+    unique_id = device_status.get("data", {}).get("UniID")
+    if unique_id is None:
+        return None
+    
+    state_field = device_status.get("MyPayloadSection", {}).get("StateField")
+    if state_field is None:
+        return None
+    
+    return MyDeviceModel(
+        **_common_device_args(device_status, unique_id),
+        # device-specific fields...
+    )
+```
+
+#### Step 4: Register Parser in Poll Loop
+
+In `poll_status()` method:
+
+```python
+# Add filter for your device type
+my_devices = list(
+    filter(lambda x: "MyPayloadSection" in x, device_items)
+)
+
+# Connect to refresh pipeline
+await self._refresh_device_collection(
+    my_devices,
+    device_type="mydevice",
+    state_attr="_mydevice_devices",
+    parser=_parse_mydevice_device,
+    callback=self._send_mydevice_update_callback,
+    send_callback=send_callback,
+)
+```
+
+#### Step 5: Add Callback Methods
+
+```python
+async def add_mydevice_update_callback(
+    self,
+    method: Callable[[Any], Awaitable[None]],
+) -> None:
+    """Add listener for MyDevice state updates."""
+    self._mydevice_update_callbacks.append(method)
+
+async def _send_mydevice_update_callback(self, device_id: str) -> None:
+    """Notify MyDevice update subscribers."""
+    for callback in self._mydevice_update_callbacks:
+        await callback(device_id=device_id)
+
+def get_mydevice_devices(self) -> dict[str, MyDeviceModel]:
+    """Return all MyDevice devices."""
+    return self._mydevice_devices
+
+def get_mydevice_device(self, device_id: str) -> MyDeviceModel | None:
+    """Return one MyDevice device."""
+    return self._mydevice_devices.get(device_id)
+```
+
+#### Step 6: Add Tests
+
+Create `tests/test_mydevice.py`:
+
+```python
+async def test_parse_mydevice_valid():
+    """Parse valid MyDevice payload."""
+    payload = {
+        "data": {"UniID": "device-1"},
+        "MyPayloadSection": {"StateField": 123},
+        # ...minimal required fields...
+    }
+    device = _parse_mydevice_device(payload)
+    assert device is not None
+    assert device.unique_id == "device-1"
+
+async def test_parse_mydevice_missing_field():
+    """Skip MyDevice with missing required field."""
+    payload = {"data": {"UniID": "device-1"}}  # Missing MyPayloadSection
+    device = _parse_mydevice_device(payload)
+    assert device is None
+
+async def test_refresh_mydevice_collection():
+    """Refresh MyDevice via _refresh_device_collection."""
+    # Use FakeSession, mock _make_encrypted_request, verify parsing
+```
+
+### SQ610 Quantum Thermostat Special Handling
+
+SQ610 thermostats have unusual protocol features. **These are already handled by the library**, but here's what makes them special:
+
+#### Humidity in Wrong Field
+
+SQ610 doesn't report humidity normally. Instead, humidity is in `sIT600TH.SunnySetpoint_x100`:
+
+```python
+# Library does this automatically for SQ610:
+if is_sq610_model(model):
+    humidity = th.get("SunnySetpoint_x100") / 100
+else:
+    humidity = None
+```
+
+#### Dual Setpoints
+
+SQ610 has separate heating and cooling setpoints depending on system mode:
+
+```python
+# iT600 (simple): Always use HeatingSetpoint_x100
+# SQ610 (complex): Use Heating OR Cooling depending on SystemMode
+is_heating = ther["SystemMode"] == 4
+target = ther["HeatingSetpoint_x100"] if is_heating else ther["CoolingSetpoint_x100"]
+```
+
+#### Hold Type Extension
+
+SQ610 supports hold type 0 (auto return to schedule), unavailable on standard models:
+
+```python
+SQ610_HOLD_AUTO = 0        # Return to schedule
+SQ610_HOLD_PERMANENT = 2   # Keep setpoint
+SQ610_HOLD_STANDBY = 7     # Off
+```
+
+#### Write Property Names
+
+When commanding SQ610 devices, use the correct write property names:
+
+```python
+# Import from device_models
+from salus_it600.device_models import SQ610_WRITE_HEATING_SETPOINT
+from salus_it600.device_models import SQ610_WRITE_SYSTEM_MODE
+
+# Use in write request
+{
+    "sTherS": {
+        SQ610_WRITE_HEATING_SETPOINT: int(temperature * 100)
+    },
+    "sTherS": {
+        SQ610_WRITE_SYSTEM_MODE: 4  # 3=cool, 4=heat, 5=emergency
+    }
+}
+```
+
+All SQ610 protocol constants are centralized in `salus_it600/device_models.py` as single source of truth.
+
 ### Contributing
 
 If you want to help to get your device supported, open GitHub issue and add your device model number and output of `main.py` program. Be sure to run this program with --debug option.

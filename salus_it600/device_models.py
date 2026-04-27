@@ -1,4 +1,66 @@
-"""Salus device model and protocol helpers."""
+"""Salus device model and protocol helpers.
+
+This module centralizes device model identifiers, protocol constants, and device
+classification logic. It serves as the single source of truth for device-specific
+behavior across the library and the Home Assistant integration.
+
+## Adding a New Device Model
+
+When adding support for a new Salus device model:
+
+1. **Define model identifier constant**: Add `MODEL_XXXXX = "XXXXX"` following
+   existing naming convention.
+
+2. **Add to classification maps if applicable**:
+   - If binary sensor: Add to `BINARY_SENSOR_DEVICE_CLASSES` with appropriate
+     Home Assistant device class ("window", "moisture", "smoke", etc.)
+   - If switch: Check if outlet or regular switch, add to `OUTLET_MODELS` if needed
+   - If climate: Determine if SQ610-like (with cooling support) or simple heater
+
+3. **Add protocol constants if unique**:
+   - If climate with cooling: Add SQ610_MODE_* and SQ610_HOLD_* constants
+   - If custom write properties: Add SQ610_WRITE_* constants
+
+4. **Create parser function in gateway.py**:
+   - Named `_parse_DEVICETYPE_MODELNAME()`
+   - Extract fields from gateway payload dict
+   - Return Device model instance or None if invalid
+   - Use `model_identifier()` helper to get model from payload
+
+5. **Register parser in poll_status()**:
+   - Add device type filter in `poll_status()` if new payload key pattern
+   - Connect to `_refresh_device_collection()` with parser function
+
+## SQ610 Quantum Thermostat Protocol Quirks
+
+SQ610 devices expose heating and cooling setpoints and modes not present in
+standard models. Key differences:
+
+- **Humidity stored in unusual field**: SQ610 devices report relative humidity
+  in the `SunnySetpoint_x100` field (normally a temperature setpoint). Divide
+  by 100 to get actual humidity %.
+
+- **Dual setpoints**: SQ610 exposes both `HeatingSetpoint_x100` and
+  `CoolingSetpoint_x100` depending on system mode, plus separate
+  `SystemMode` field (3=cool, 4=heat, 5=emergency).
+
+- **Hold type variants**: SQ610 uses hold type 7 for standby (Off), but also
+  supports hold type 0 (auto return to schedule).
+
+- **Write property names**: When setting SQ610 state, use properties from
+  `SQ610_WRITE_*` constants rather than generic field names.
+
+## Device Classification
+
+Devices are classified by protocol signature in gateway payloads:
+
+- **Climate**: Contains `sIT600TH` or `sTherS` sections with temperature data
+- **Binary sensor**: Contains `sIASZS` alarm/contact data, or is MINITRV/Receiver
+- **Sensor**: Contains `sTempS` with `MeasuredValue_x100` temperature
+- **Switch**: Contains `sOnOffS` with `OnOff` relay state
+- **Cover**: Contains `sLevelS` with `CurrentLevel` position data
+- **Gateway**: Root gateway device with `sGateway` MAC address
+"""
 
 from __future__ import annotations
 
@@ -48,13 +110,33 @@ SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 
 
 def model_identifier(device_status: dict[str, Any]) -> str | None:
-    """Return the device model identifier from a detailed gateway payload."""
+    """Return the device model identifier from a detailed gateway payload.
+    
+    Extracts model from the `DeviceL.ModelIdentifier_i` field in a device detail
+    response (returned by the "deviceid" read request).
+    
+    Args:
+        device_status: Device detail dict from gateway readall/deviceid response
+    
+    Returns:
+        Model identifier string (e.g. "SQ610RF", "FC600") or None if missing/invalid
+    """
     model = device_status.get("DeviceL", {}).get("ModelIdentifier_i")
     return model if isinstance(model, str) else None
 
 
 def basic_model_identifier(device_status: dict[str, Any]) -> str | None:
-    """Return the model identifier from a readall summary payload."""
+    """Return the model identifier from a readall summary payload.
+    
+    Extracts model from the `sBasicS.ModelIdentifier` field in a readall response
+    (not available in detailed deviceid responses).
+    
+    Args:
+        device_status: Device summary dict from gateway readall response
+    
+    Returns:
+        Model identifier string or None if missing/invalid
+    """
     basic = device_status.get("sBasicS")
     if not isinstance(basic, dict):
         return None
@@ -63,25 +145,103 @@ def basic_model_identifier(device_status: dict[str, Any]) -> str | None:
 
 
 def is_sq610_model(model: str | None) -> bool:
-    """Return whether a model identifier is an SQ610 Quantum thermostat."""
+    """Return whether a model identifier is an SQ610 Quantum thermostat.
+    
+    SQ610 models are identified by the presence of "SQ610" in the model string
+    (case-insensitive). Variants include SQ610, SQ610RF, etc.
+    
+    SQ610 thermostats have special protocol features:
+    - Separate heating and cooling setpoints
+    - Humidity reported in SunnySetpoint_x100 field
+    - Extended hold type support (auto, permanent, standby)
+    - SystemMode field for mode selection (3=cool, 4=heat, 5=emergency)
+    
+    Args:
+        model: Model identifier string or None
+    
+    Returns:
+        True if SQ610 variant, False otherwise
+    
+    See Also:
+        Module docstring for SQ610 protocol quirks
+    """
     return isinstance(model, str) and SQ610_MODEL_TOKEN in model.upper()
 
 
 def is_fan_coil_model(model: str | None) -> bool:
-    """Return whether a model identifier is an FC600 fan-coil thermostat."""
+    """Return whether a model identifier is an FC600 fan-coil thermostat.
+    
+    FC600 models have different protocol structure than standard iT600TH
+    thermostats: they use `sTherS` (with separate cooling setpoint) +
+    `sComm` (hold type) + `sFanS` (fan mode) instead of single `sIT600TH`.
+    
+    Args:
+        model: Model identifier string or None
+    
+    Returns:
+        True if FC600, False otherwise
+    """
     return model == MODEL_FC600
 
 
 def is_binary_sensor_summary(device_status: dict[str, Any]) -> bool:
-    """Return whether a readall entry describes a binary sensor."""
+    """Return whether a readall entry describes a binary sensor.
+    
+    Binary sensors are identified by either:
+    - Presence of `sIASZS` section (contact/alarm/motion sensors)
+    - Model in BINARY_RELAY_MODELS (TRV or receiver relay)
+    
+    Typically detects: door/window contacts, moisture sensors, smoke detectors,
+    mini TRVs with relay, wireless receivers.
+    
+    Args:
+        device_status: Device summary dict from gateway readall response
+    
+    Returns:
+        True if binary sensor protocol signature detected
+    """
     return "sIASZS" in device_status or basic_model_identifier(device_status) in BINARY_RELAY_MODELS
 
 
 def binary_sensor_device_class(model: str | None) -> str | None:
-    """Return the Home Assistant-style binary sensor device class."""
+    """Return the Home Assistant-style binary sensor device class.
+    
+    Maps Salus model identifiers to standard Home Assistant binary sensor
+    device classes for consistent icon and state display.
+    
+    Args:
+        model: Salus model identifier (e.g. "SW600", "WLS600")
+    
+    Returns:
+        Home Assistant device class string ("window", "moisture", "smoke", etc.)
+        or None if model not in BINARY_SENSOR_DEVICE_CLASSES map
+    
+    Example:
+        >>> binary_sensor_device_class("SW600")
+        "window"
+        >>> binary_sensor_device_class("WLS600")
+        "moisture"
+    """
     return BINARY_SENSOR_DEVICE_CLASSES.get(model)
 
 
 def switch_device_class(model: str | None) -> str:
-    """Return the Home Assistant-style switch device class."""
+    """Return the Home Assistant-style switch device class.
+    
+    Maps Salus model identifiers to Home Assistant switch device classes.
+    Most switches are generic "switch", but power outlets (SP600, SPE600)
+    are marked as "outlet" for icon distinction.
+    
+    Args:
+        model: Salus model identifier (e.g. "SP600", "SPE600", "RS600")
+    
+    Returns:
+        "outlet" for power outlet models, "switch" for others
+    
+    Example:
+        >>> switch_device_class("SP600")
+        "outlet"
+        >>> switch_device_class("RS600")
+        "switch"
+    """
     return "outlet" if model in OUTLET_MODELS else "switch"
