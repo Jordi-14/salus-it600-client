@@ -65,8 +65,8 @@ git pull --ff-only origin master
 python3 -m unittest
 python3 -m build
 python3 -m twine check dist/*
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The `Publish to PyPI` workflow then:
@@ -84,8 +84,8 @@ If the workflow fails before uploading, fix the branch and move the tag to the
 fixed commit only if nothing was published:
 
 ```bash
-git tag -f v0.2.0
-git push --force origin v0.2.0
+git tag -f v0.3.0
+git push --force origin v0.3.0
 ```
 
 If any file was already uploaded to PyPI, never reuse that version. Bump to the

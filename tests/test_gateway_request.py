@@ -4,7 +4,22 @@ import asyncio
 import json
 import unittest
 
-from salus_it600.const import FAN_MODE_MEDIUM
+from salus_it600.const import (
+    CURRENT_HVAC_IDLE,
+    FAN_MODE_AUTO,
+    FAN_MODE_HIGH,
+    FAN_MODE_LOW,
+    FAN_MODE_MEDIUM,
+    FAN_MODE_OFF,
+    HVAC_MODE_AUTO,
+    HVAC_MODE_COOL,
+    HVAC_MODE_HEAT,
+    PRESET_ECO,
+    PRESET_FOLLOW_SCHEDULE,
+    PRESET_OFF,
+    PRESET_PERMANENT_HOLD,
+    PRESET_TEMPORARY_HOLD,
+)
 from salus_it600.exceptions import IT600CommandError, IT600ConnectionError
 from salus_it600.gateway import IT600Gateway
 from salus_it600.models import ClimateDevice
@@ -65,13 +80,25 @@ def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
         max_temp=35.0,
         min_temp=5.0,
         current_humidity=None,
-        hvac_mode="Heat",
-        hvac_action="Idle",
-        hvac_modes=[],
-        preset_mode="Permanent Hold",
-        preset_modes=[],
+        hvac_mode=HVAC_MODE_HEAT,
+        hvac_action=CURRENT_HVAC_IDLE,
+        hvac_modes=[HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO],
+        preset_mode=PRESET_PERMANENT_HOLD,
+        preset_modes=[
+            PRESET_OFF,
+            PRESET_PERMANENT_HOLD,
+            PRESET_ECO,
+            PRESET_TEMPORARY_HOLD,
+            PRESET_FOLLOW_SCHEDULE,
+        ],
         fan_mode=None,
-        fan_modes=[],
+        fan_modes=[
+            FAN_MODE_AUTO,
+            FAN_MODE_HIGH,
+            FAN_MODE_MEDIUM,
+            FAN_MODE_LOW,
+            FAN_MODE_OFF,
+        ],
         locked=None,
         supported_features=0,
         device_class="temperature",
@@ -181,6 +208,53 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("write", request["requestAttr"])
         self.assertEqual({"FanMode": 2}, request["id"][0]["sFanS"])
         self.assertEqual({"UniID": "climate-1"}, request["id"][0]["data"])
+
+    async def test_public_commands_reject_blank_device_id(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(ValueError):
+            await gateway.turn_on_switch_device(" ")
+
+    async def test_public_commands_reject_missing_devices(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(KeyError):
+            await gateway.turn_on_switch_device("missing-switch")
+
+    async def test_set_cover_position_rejects_invalid_range(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(ValueError):
+            await gateway.set_cover_position("cover-1", 101)
+
+    async def test_set_climate_device_fan_mode_rejects_unsupported_mode(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        with self.assertRaises(ValueError):
+            await gateway.set_climate_device_fan_mode("climate-1", "Turbo")
+
+    async def test_set_climate_device_fan_mode_rejects_devices_without_fan_modes(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()._replace(
+            fan_modes=None
+        )
+
+        with self.assertRaises(ValueError):
+            await gateway.set_climate_device_fan_mode("climate-1", FAN_MODE_MEDIUM)
+
+    async def test_set_climate_device_temperature_rejects_out_of_range(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        with self.assertRaises(ValueError):
+            await gateway.set_climate_device_temperature("climate-1", 50.0)
 
 
 if __name__ == "__main__":

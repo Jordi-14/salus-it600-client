@@ -1,15 +1,19 @@
 """Salus iT600 smart device models."""
 
-from typing import List, NamedTuple, Optional, Any
+from __future__ import annotations
+
+from typing import Any, NamedTuple
+
+DeviceData = dict[str, Any]
 
 
 class GatewayDevice(NamedTuple):
     name: str
     unique_id: str
-    data: dict
+    data: DeviceData
     manufacturer: str
-    model: Optional[str]
-    sw_version: Optional[str]
+    model: str | None
+    sw_version: str | None
 
 
 class ClimateDevice(NamedTuple):
@@ -22,21 +26,21 @@ class ClimateDevice(NamedTuple):
     target_temperature: float
     max_temp: float
     min_temp: float
-    current_humidity: Optional[float]
+    current_humidity: float | None
     hvac_mode: str
     hvac_action: str
-    hvac_modes: List[str]
+    hvac_modes: list[str]
     preset_mode: str
-    preset_modes: List[str]
-    fan_mode: Optional[str]
-    fan_modes: Optional[List[str]]
-    locked: Optional[bool]
+    preset_modes: list[str]
+    fan_mode: str | None
+    fan_modes: list[str] | None
+    locked: bool | None
     supported_features: int
     device_class: str
-    data: dict
+    data: DeviceData
     manufacturer: str
-    model: Optional[str]
-    sw_version: Optional[str]
+    model: str | None
+    sw_version: str | None
 
 
 class BinarySensorDevice(NamedTuple):
@@ -44,11 +48,11 @@ class BinarySensorDevice(NamedTuple):
     name: str
     unique_id: str
     is_on: bool
-    device_class: Optional[str]
-    data: dict
+    device_class: str | None
+    data: DeviceData
     manufacturer: str
-    model: Optional[str]
-    sw_version: Optional[str]
+    model: str | None
+    sw_version: str | None
 
 
 class SwitchDevice(NamedTuple):
@@ -57,26 +61,26 @@ class SwitchDevice(NamedTuple):
     unique_id: str
     is_on: bool
     device_class: str
-    data: dict
+    data: DeviceData
     manufacturer: str
-    model: Optional[str]
-    sw_version: Optional[str]
+    model: str | None
+    sw_version: str | None
 
 
 class CoverDevice(NamedTuple):
     available: bool
     name: str
     unique_id: str
-    current_cover_position: Optional[int]
-    is_opening: Optional[bool]
-    is_closing: Optional[bool]
+    current_cover_position: int | None
+    is_opening: bool | None
+    is_closing: bool | None
     is_closed: bool
     supported_features: int
-    device_class: Optional[str]
-    data: dict
+    device_class: str | None
+    data: DeviceData
     manufacturer: str
-    model: Optional[str]
-    sw_version: Optional[str]
+    model: str | None
+    sw_version: str | None
 
 
 class SensorDevice(NamedTuple):
@@ -86,7 +90,7 @@ class SensorDevice(NamedTuple):
     state: Any
     unit_of_measurement: str
     device_class: str
-    data: dict
+    data: DeviceData
     manufacturer: str
-    model: Optional[str]
-    sw_version: Optional[str]
+    model: str | None
+    sw_version: str | None
