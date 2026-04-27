@@ -3,13 +3,16 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Callable, Awaitable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, TypeVar
 
 import aiohttp
 
 from aiohttp import client_exceptions
 
 from .const import (
+    COVER_POSITION_MAX,
+    COVER_POSITION_MIN,
     CURRENT_HVAC_HEAT,
     CURRENT_HVAC_HEAT_IDLE,
     CURRENT_HVAC_COOL,
@@ -36,7 +39,12 @@ from .const import (
     FAN_MODE_HIGH,
     FAN_MODE_MEDIUM,
     FAN_MODE_LOW,
-    FAN_MODE_OFF
+    FAN_MODE_OFF,
+    FanMode,
+    HoldType,
+    RunningState,
+    SystemMode,
+    TEMPERATURE_SCALE,
 )
 from .encryptor import IT600Encryptor
 from .exceptions import (
@@ -58,10 +66,97 @@ from .models import GatewayDevice, ClimateDevice, BinarySensorDevice, SwitchDevi
 
 _LOGGER = logging.getLogger("salus_it600")
 
-DEFAULT_HOLD_TYPE = 2
-DEFAULT_RUNNING_STATE = 0
+DEFAULT_HOLD_TYPE = HoldType.PERMANENT_HOLD
+DEFAULT_RUNNING_STATE = RunningState.IDLE
+DEVICE_NOT_FOUND_ERROR = "{device_type} device not found with id: {device_id}"
 PARSING_EXCEPTIONS = (KeyError, TypeError, ValueError)
 _MISSING_HOLD_TYPE_WARNED: set[str] = set()
+DeviceT = TypeVar(
+    "DeviceT",
+    ClimateDevice,
+    BinarySensorDevice,
+    SwitchDevice,
+    CoverDevice,
+    SensorDevice,
+)
+UpdateCallback = Callable[..., Awaitable[None]]
+
+
+def _validate_non_empty_string(value: str, field_name: str) -> str:
+    """Validate a public string argument and return its stripped value."""
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string")
+
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be empty")
+
+    return normalized
+
+
+def _validate_positive_number(value: int | float, field_name: str) -> int | float:
+    """Validate a positive numeric argument."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{field_name} must be a number")
+    if value <= 0:
+        raise ValueError(f"{field_name} must be greater than 0")
+    return value
+
+
+def _validate_int_range(
+    value: int,
+    field_name: str,
+    min_value: int,
+    max_value: int,
+) -> int:
+    """Validate an integer argument against inclusive bounds."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field_name} must be an integer")
+    if value < min_value or value > max_value:
+        raise ValueError(
+            f"{field_name} must be between {min_value} and {max_value} "
+            "(both bounds inclusive)"
+        )
+    return value
+
+
+def _validate_supported_value(
+    value: str,
+    field_name: str,
+    supported_values: Sequence[str] | None,
+) -> str:
+    """Validate that a string argument is supported by the target device."""
+    normalized = _validate_non_empty_string(value, field_name)
+    if supported_values is not None and normalized not in supported_values:
+        raise ValueError(
+            f"{field_name} must be one of {sorted(supported_values)}, got "
+            f"{normalized!r}"
+        )
+    return normalized
+
+
+def _validate_setpoint(
+    value: int | float,
+    min_temp: float,
+    max_temp: float,
+) -> float:
+    """Validate a temperature setpoint against the device-supported range."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError("setpoint_celsius must be a number")
+
+    setpoint = float(value)
+    if setpoint < min_temp or setpoint > max_temp:
+        raise ValueError(
+            f"setpoint_celsius must be between {min_temp} and {max_temp}"
+        )
+    return setpoint
+
+
+def _validate_callback(method: UpdateCallback) -> UpdateCallback:
+    """Validate update callback registration input."""
+    if not callable(method):
+        raise TypeError("method must be callable")
+    return method
 
 
 def _device_name(device_status: dict[str, Any], unique_id: str | None) -> str:
@@ -73,7 +168,8 @@ def _device_name(device_status: dict[str, Any], unique_id: str | None) -> str:
     )
 
     try:
-        return json.loads(raw_name)["deviceName"]
+        device_name = json.loads(raw_name)["deviceName"]
+        return device_name if isinstance(device_name, str) else default_name
     except (KeyError, TypeError, ValueError):
         return default_name
 
@@ -88,7 +184,7 @@ def _hold_type(payload: dict[str, Any], unique_id: str) -> int:
         )
         _MISSING_HOLD_TYPE_WARNED.add(unique_id)
 
-    return payload.get("HoldType", DEFAULT_HOLD_TYPE)
+    return int(payload.get("HoldType", DEFAULT_HOLD_TYPE))
 
 
 def _validate_gateway_response(response: Any, context: str) -> dict[str, Any]:
@@ -152,12 +248,14 @@ def _device_status_request_items(
 
 def _online(device_status: dict[str, Any]) -> bool:
     """Return whether a device is marked online in a gateway payload."""
-    return device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1) == 1
+    status = device_status.get("sZDOInfo", {}).get("OnlineStatus_i", 1)
+    return bool(status == 1)
 
 
 def _firmware_version(device_status: dict[str, Any]) -> str | None:
     """Return the common firmware version field from a gateway payload."""
-    return device_status.get("sZDO", {}).get("FirmwareVersion")
+    version = device_status.get("sZDO", {}).get("FirmwareVersion")
+    return version if isinstance(version, str) else None
 
 
 def _common_device_args(
@@ -304,7 +402,7 @@ def _parse_sensor_device(device_status: dict[str, Any]) -> SensorDevice | None:
     unique_id = f"{unique_id}_temp"
     return SensorDevice(
         **_common_device_args(device_status, unique_id),
-        state=temperature / 100,
+        state=temperature / TEMPERATURE_SCALE,
         unit_of_measurement=TEMP_CELSIUS,
         device_class="temperature",
     )
@@ -419,25 +517,25 @@ def _parse_it600th_climate_device(
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
         current_humidity=current_humidity,
-        current_temperature=th["LocalTemperature_x100"] / 100,
-        target_temperature=th["HeatingSetpoint_x100"] / 100,
-        max_temp=th.get("MaxHeatSetpoint_x100", 3500) / 100,
-        min_temp=th.get("MinHeatSetpoint_x100", 500) / 100,
+        current_temperature=th["LocalTemperature_x100"] / TEMPERATURE_SCALE,
+        target_temperature=th["HeatingSetpoint_x100"] / TEMPERATURE_SCALE,
+        max_temp=th.get("MaxHeatSetpoint_x100", 3500) / TEMPERATURE_SCALE,
+        min_temp=th.get("MinHeatSetpoint_x100", 500) / TEMPERATURE_SCALE,
         hvac_mode=HVAC_MODE_OFF
-        if hold_type == 7
+        if hold_type == HoldType.STANDBY
         else HVAC_MODE_HEAT
-        if hold_type == 2
+        if hold_type == HoldType.PERMANENT_HOLD
         else HVAC_MODE_AUTO,
         hvac_action=CURRENT_HVAC_OFF
-        if hold_type == 7
+        if hold_type == HoldType.STANDBY
         else CURRENT_HVAC_IDLE
         if running_state % 2 == 0
         else CURRENT_HVAC_HEAT,
         hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
         preset_mode=PRESET_OFF
-        if hold_type == 7
+        if hold_type == HoldType.STANDBY
         else PRESET_PERMANENT_HOLD
-        if hold_type == 2
+        if hold_type == HoldType.PERMANENT_HOLD
         else PRESET_FOLLOW_SCHEDULE,
         preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
         fan_mode=None,
@@ -485,49 +583,49 @@ def _parse_fan_coil_climate_device(
     Raises:
         KeyError: If required fields missing (caught as PARSING_EXCEPTIONS)
     """
-    is_heating = ther["SystemMode"] == 4
-    fan_mode = sfans.get("FanMode", 5)
+    is_heating = ther["SystemMode"] == SystemMode.HEAT
+    fan_mode = sfans.get("FanMode", FanMode.AUTO)
     hold_type = _hold_type(scomm, unique_id)
     running_state = ther.get("RunningState", DEFAULT_RUNNING_STATE)
 
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
         current_humidity=None,
-        current_temperature=ther["LocalTemperature_x100"] / 100,
-        target_temperature=(ther["HeatingSetpoint_x100"] / 100)
+        current_temperature=ther["LocalTemperature_x100"] / TEMPERATURE_SCALE,
+        target_temperature=(ther["HeatingSetpoint_x100"] / TEMPERATURE_SCALE)
         if is_heating
-        else (ther["CoolingSetpoint_x100"] / 100),
-        max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / 100)
+        else (ther["CoolingSetpoint_x100"] / TEMPERATURE_SCALE),
+        max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / TEMPERATURE_SCALE)
         if is_heating
-        else (ther.get("MaxCoolSetpoint_x100", 4000) / 100),
-        min_temp=(ther.get("MinHeatSetpoint_x100", 500) / 100)
+        else (ther.get("MaxCoolSetpoint_x100", 4000) / TEMPERATURE_SCALE),
+        min_temp=(ther.get("MinHeatSetpoint_x100", 500) / TEMPERATURE_SCALE)
         if is_heating
-        else (ther.get("MinCoolSetpoint_x100", 500) / 100),
+        else (ther.get("MinCoolSetpoint_x100", 500) / TEMPERATURE_SCALE),
         hvac_mode=HVAC_MODE_HEAT
-        if ther["SystemMode"] == 4
+        if ther["SystemMode"] == SystemMode.HEAT
         else HVAC_MODE_COOL
-        if ther["SystemMode"] == 3
+        if ther["SystemMode"] == SystemMode.COOL
         else HVAC_MODE_AUTO,
         hvac_action=CURRENT_HVAC_OFF
-        if hold_type == 7
+        if hold_type == HoldType.STANDBY
         else CURRENT_HVAC_IDLE
-        if running_state == 0
+        if running_state == RunningState.IDLE
         else CURRENT_HVAC_HEAT
-        if is_heating and running_state == 33
+        if is_heating and running_state == RunningState.FAN_COIL_HEATING
         else CURRENT_HVAC_HEAT_IDLE
         if is_heating
         else CURRENT_HVAC_COOL
-        if running_state == 66
+        if running_state == RunningState.FAN_COIL_COOLING
         else CURRENT_HVAC_COOL_IDLE,
         hvac_modes=[HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO],
         preset_mode=PRESET_OFF
-        if hold_type == 7
+        if hold_type == HoldType.STANDBY
         else PRESET_PERMANENT_HOLD
-        if hold_type == 2
+        if hold_type == HoldType.PERMANENT_HOLD
         else PRESET_ECO
-        if hold_type == 10
+        if hold_type == HoldType.ECO
         else PRESET_TEMPORARY_HOLD
-        if hold_type == 1
+        if hold_type == HoldType.TEMPORARY_HOLD
         else PRESET_FOLLOW_SCHEDULE,
         preset_modes=[
             PRESET_OFF,
@@ -537,13 +635,13 @@ def _parse_fan_coil_climate_device(
             PRESET_FOLLOW_SCHEDULE,
         ],
         fan_mode=FAN_MODE_OFF
-        if fan_mode == 0
+        if fan_mode == FanMode.OFF
         else FAN_MODE_HIGH
-        if fan_mode == 3
+        if fan_mode == FanMode.HIGH
         else FAN_MODE_MEDIUM
-        if fan_mode == 2
+        if fan_mode == FanMode.MEDIUM
         else FAN_MODE_LOW
-        if fan_mode == 1
+        if fan_mode == FanMode.LOW
         else FAN_MODE_AUTO,
         fan_modes=[
             FAN_MODE_AUTO,
@@ -590,10 +688,18 @@ class IT600Gateway:
             euid: str,
             host: str,
             port: int = 80,
-            request_timeout: int = 5,
-            session: aiohttp.client.ClientSession = None,
+            request_timeout: int | float = 5,
+            session: aiohttp.ClientSession | None = None,
             debug: bool = False,
-    ):
+    ) -> None:
+        euid = _validate_non_empty_string(euid, "euid")
+        host = _validate_non_empty_string(host, "host")
+        port = _validate_int_range(port, "port", 1, 65535)
+        request_timeout = _validate_positive_number(
+            request_timeout,
+            "request_timeout",
+        )
+
         self._encryptor = IT600Encryptor(euid)
         self._host = host
         self._port = port
@@ -605,22 +711,22 @@ class IT600Gateway:
         self._session = session
         self._close_session = False
 
-        self._gateway_device: Optional[GatewayDevice] = None
+        self._gateway_device: GatewayDevice | None = None
 
-        self._climate_devices: Dict[str, ClimateDevice] = {}
-        self._climate_update_callbacks: List[Callable[[Any], Awaitable[None]]] = []
+        self._climate_devices: dict[str, ClimateDevice] = {}
+        self._climate_update_callbacks: list[UpdateCallback] = []
 
-        self._binary_sensor_devices: Dict[str, BinarySensorDevice] = {}
-        self._binary_sensor_update_callbacks: List[Callable[[Any], Awaitable[None]]] = []
+        self._binary_sensor_devices: dict[str, BinarySensorDevice] = {}
+        self._binary_sensor_update_callbacks: list[UpdateCallback] = []
 
-        self._switch_devices: Dict[str, SwitchDevice] = {}
-        self._switch_update_callbacks: List[Callable[[Any], Awaitable[None]]] = []
+        self._switch_devices: dict[str, SwitchDevice] = {}
+        self._switch_update_callbacks: list[UpdateCallback] = []
 
-        self._cover_devices: Dict[str, CoverDevice] = {}
-        self._cover_update_callbacks: List[Callable[[Any], Awaitable[None]]] = []
+        self._cover_devices: dict[str, CoverDevice] = {}
+        self._cover_update_callbacks: list[UpdateCallback] = []
 
-        self._sensor_devices: Dict[str, SensorDevice] = {}
-        self._sensor_update_callbacks: List[Callable[[Any], Awaitable[None]]] = []
+        self._sensor_devices: dict[str, SensorDevice] = {}
+        self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
         """Public method for connecting to Salus universal gateway.
@@ -654,7 +760,12 @@ class IT600Gateway:
                     "response did not contain gateway information"
                 )
 
-            return gateway["sGateway"]["NetworkLANMAC"]
+            gateway_mac = gateway["sGateway"]["NetworkLANMAC"]
+            if not isinstance(gateway_mac, str):
+                raise IT600CommandError(
+                    "Gateway discovery response contained an invalid MAC address"
+                )
+            return gateway_mac
         except IT600ConnectionError as ae:
             try:
                 async with asyncio.timeout(self._request_timeout):
@@ -670,7 +781,7 @@ class IT600Gateway:
                 "check if you have specified EUID correctly"
             ) from ae
 
-    async def poll_status(self, send_callback=False) -> None:
+    async def poll_status(self, send_callback: bool = False) -> None:
         """Public method for polling the state of Salus iT600 devices."""
 
         all_devices = await self._make_encrypted_request(
@@ -712,11 +823,11 @@ class IT600Gateway:
 
     async def _refresh_device_collection(
         self,
-        devices: List[Any],
+        devices: list[Any],
         device_type: str,
         state_attr: str,
         parser: Callable[[dict[str, Any]], Any | None],
-        callback: Callable[..., Awaitable[None]],
+        callback: UpdateCallback,
         send_callback: bool = False,
     ) -> None:
         """Refresh one device collection using a parser for that device type.
@@ -802,8 +913,12 @@ class IT600Gateway:
             device_type,
         )
 
-    async def _refresh_gateway_device(self, devices: List[Any], send_callback=False):
-        local_device: Optional[GatewayDevice] = None
+    async def _refresh_gateway_device(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
+        local_device: GatewayDevice | None = None
 
         if devices:
             request_items = _device_status_request_items(devices, "gateway")
@@ -825,11 +940,11 @@ class IT600Gateway:
                 if unique_id is None:
                     continue
 
-                model: Optional[str] = device_status.get("sGateway", {}).get("ModelIdentifier", None)
+                model: str | None = device_status.get("sGateway", {}).get("ModelIdentifier", None)
 
                 try:
                     local_device = GatewayDevice(
-                        name=model,
+                        name=model or unique_id,
                         unique_id=unique_id,
                         data=device_status["data"],
                         manufacturer=device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
@@ -842,7 +957,11 @@ class IT600Gateway:
             self._gateway_device = local_device
             _LOGGER.debug("Refreshed gateway device")
 
-    async def _refresh_cover_devices(self, devices: List[Any], send_callback=False):
+    async def _refresh_cover_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
         await self._refresh_device_collection(
             devices,
             "cover",
@@ -852,7 +971,11 @@ class IT600Gateway:
             send_callback,
         )
 
-    async def _refresh_switch_devices(self, devices: List[Any], send_callback=False):
+    async def _refresh_switch_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
         await self._refresh_device_collection(
             devices,
             "switch",
@@ -862,7 +985,11 @@ class IT600Gateway:
             send_callback,
         )
 
-    async def _refresh_sensor_devices(self, devices: List[Any], send_callback=False):
+    async def _refresh_sensor_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
         await self._refresh_device_collection(
             devices,
             "sensor",
@@ -872,7 +999,11 @@ class IT600Gateway:
             send_callback,
         )
 
-    async def _refresh_binary_sensor_devices(self, devices: List[Any], send_callback=False):
+    async def _refresh_binary_sensor_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
         await self._refresh_device_collection(
             devices,
             "binary sensor",
@@ -882,7 +1013,11 @@ class IT600Gateway:
             send_callback,
         )
 
-    async def _refresh_climate_devices(self, devices: List[Any], send_callback=False):
+    async def _refresh_climate_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
         await self._refresh_device_collection(
             devices,
             "climate",
@@ -937,72 +1072,97 @@ class IT600Gateway:
         else:
             _LOGGER.error("Callback for sensor updates has not been set")
 
-    def get_gateway_device(self) -> Optional[GatewayDevice]:
+    @staticmethod
+    def _validate_device_id(device_id: str) -> str:
+        return _validate_non_empty_string(device_id, "device_id")
+
+    def _require_device(
+        self,
+        device_id: str,
+        devices: Mapping[str, DeviceT],
+        device_type: str,
+    ) -> DeviceT:
+        device_id = self._validate_device_id(device_id)
+        device = devices.get(device_id)
+        if device is None:
+            raise KeyError(
+                DEVICE_NOT_FOUND_ERROR.format(
+                    device_type=device_type,
+                    device_id=device_id,
+                )
+            )
+        return device
+
+    def get_gateway_device(self) -> GatewayDevice | None:
         """Public method to return gateway device."""
 
         return self._gateway_device
 
-    def get_climate_devices(self) -> Dict[str, ClimateDevice]:
+    def get_climate_devices(self) -> dict[str, ClimateDevice]:
         """Public method to return the state of all Salus IT600 climate devices."""
 
         return self._climate_devices
 
-    def get_climate_device(self, device_id: str) -> Optional[ClimateDevice]:
+    def get_climate_device(self, device_id: str) -> ClimateDevice | None:
         """Public method to return the state of the specified climate device."""
 
+        device_id = self._validate_device_id(device_id)
         return self._climate_devices.get(device_id)
 
-    def get_binary_sensor_devices(self) -> Dict[str, BinarySensorDevice]:
+    def get_binary_sensor_devices(self) -> dict[str, BinarySensorDevice]:
         """Public method to return the state of all Salus IT600 binary sensor devices."""
 
         return self._binary_sensor_devices
 
-    def get_binary_sensor_device(self, device_id: str) -> Optional[BinarySensorDevice]:
+    def get_binary_sensor_device(self, device_id: str) -> BinarySensorDevice | None:
         """Public method to return the state of the specified binary sensor device."""
 
+        device_id = self._validate_device_id(device_id)
         return self._binary_sensor_devices.get(device_id)
 
-    def get_switch_devices(self) -> Dict[str, SwitchDevice]:
+    def get_switch_devices(self) -> dict[str, SwitchDevice]:
         """Public method to return the state of all Salus IT600 switch devices."""
 
         return self._switch_devices
 
-    def get_switch_device(self, device_id: str) -> Optional[SwitchDevice]:
+    def get_switch_device(self, device_id: str) -> SwitchDevice | None:
         """Public method to return the state of the specified switch device."""
 
+        device_id = self._validate_device_id(device_id)
         return self._switch_devices.get(device_id)
 
-    def get_cover_devices(self) -> Dict[str, CoverDevice]:
+    def get_cover_devices(self) -> dict[str, CoverDevice]:
         """Public method to return the state of all Salus IT600 cover devices."""
 
         return self._cover_devices
 
-    def get_cover_device(self, device_id: str) -> Optional[CoverDevice]:
+    def get_cover_device(self, device_id: str) -> CoverDevice | None:
         """Public method to return the state of the specified cover device."""
 
+        device_id = self._validate_device_id(device_id)
         return self._cover_devices.get(device_id)
 
-    def get_sensor_devices(self) -> Dict[str, SensorDevice]:
+    def get_sensor_devices(self) -> dict[str, SensorDevice]:
         """Public method to return the state of all Salus IT600 sensor devices."""
 
         return self._sensor_devices
 
-    def get_sensor_device(self, device_id: str) -> Optional[SensorDevice]:
+    def get_sensor_device(self, device_id: str) -> SensorDevice | None:
         """Public method to return the state of the specified sensor device."""
 
+        device_id = self._validate_device_id(device_id)
         return self._sensor_devices.get(device_id)
 
     async def set_cover_position(self, device_id: str, position: int) -> None:
         """Public method to set position/level (where 0 means closed and 100 is fully open) on the specified cover device."""
 
-        if position < 0 or position > 100:
-            raise ValueError("position must be between 0 and 100 (both bounds inclusive)")
-
-        device = self.get_cover_device(device_id)
-
-        if device is None:
-            _LOGGER.error("Cannot set cover position: cover device not found with the specified id: %s", device_id)
-            return
+        position = _validate_int_range(
+            position,
+            "position",
+            COVER_POSITION_MIN,
+            COVER_POSITION_MAX,
+        )
+        device = self._require_device(device_id, self._cover_devices, "cover")
 
         await self._make_encrypted_request(
             "write",
@@ -1022,21 +1182,17 @@ class IT600Gateway:
     async def open_cover(self, device_id: str) -> None:
         """Public method to open the specified cover device."""
 
-        await self.set_cover_position(device_id, 100)
+        await self.set_cover_position(device_id, COVER_POSITION_MAX)
 
     async def close_cover(self, device_id: str) -> None:
         """Public method to close the specified cover device."""
 
-        await self.set_cover_position(device_id, 0)
+        await self.set_cover_position(device_id, COVER_POSITION_MIN)
 
     async def turn_on_switch_device(self, device_id: str) -> None:
         """Public method to turn on the specified switch device."""
 
-        device = self.get_switch_device(device_id)
-
-        if device is None:
-            _LOGGER.error("Cannot turn on: switch device not found with the specified id: %s", device_id)
-            return
+        device = self._require_device(device_id, self._switch_devices, "switch")
 
         await self._make_encrypted_request(
             "write",
@@ -1056,11 +1212,7 @@ class IT600Gateway:
     async def turn_off_switch_device(self, device_id: str) -> None:
         """Public method to turn off the specified switch device."""
 
-        device = self.get_switch_device(device_id)
-
-        if device is None:
-            _LOGGER.error("Cannot turn off: switch device not found with the specified id: %s", device_id)
-            return
+        device = self._require_device(device_id, self._switch_devices, "switch")
 
         await self._make_encrypted_request(
             "write",
@@ -1080,16 +1232,34 @@ class IT600Gateway:
     async def set_climate_device_preset(self, device_id: str, preset: str) -> None:
         """Public method for setting the hvac preset."""
 
-        device = self.get_climate_device(device_id)
-
-        if device is None:
-            _LOGGER.error("Cannot set mode: climate device not found with the specified id: %s", device_id)
-            return
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        preset = _validate_supported_value(preset, "preset", device.preset_modes)
+        request_data: dict[str, dict[str, int]]
 
         if device.model == MODEL_FC600:
-            request_data = { "sComm": { "SetHoldType": 7 if preset == PRESET_OFF else 10 if preset == PRESET_ECO else 2 if preset == PRESET_PERMANENT_HOLD else 1 if preset == PRESET_TEMPORARY_HOLD else 0 } }
+            request_data = {
+                "sComm": {
+                    "SetHoldType": HoldType.STANDBY
+                    if preset == PRESET_OFF
+                    else HoldType.ECO
+                    if preset == PRESET_ECO
+                    else HoldType.PERMANENT_HOLD
+                    if preset == PRESET_PERMANENT_HOLD
+                    else HoldType.TEMPORARY_HOLD
+                    if preset == PRESET_TEMPORARY_HOLD
+                    else HoldType.FOLLOW_SCHEDULE
+                }
+            }
         else:
-            request_data = { "sIT600TH": { "SetHoldType": 7 if preset == PRESET_OFF else 2 if preset == PRESET_PERMANENT_HOLD else 0 } }
+            request_data = {
+                "sIT600TH": {
+                    "SetHoldType": HoldType.STANDBY
+                    if preset == PRESET_OFF
+                    else HoldType.PERMANENT_HOLD
+                    if preset == PRESET_PERMANENT_HOLD
+                    else HoldType.FOLLOW_SCHEDULE
+                }
+            }
 
         await self._make_encrypted_request(
             "write",
@@ -1107,16 +1277,28 @@ class IT600Gateway:
     async def set_climate_device_mode(self, device_id: str, mode: str) -> None:
         """Public method for setting the hvac mode."""
 
-        device = self.get_climate_device(device_id)
-
-        if device is None:
-            _LOGGER.error("Cannot set mode: device not found with the specified id: %s", device_id)
-            return
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        mode = _validate_supported_value(mode, "mode", device.hvac_modes)
+        request_data: dict[str, dict[str, int]]
 
         if device.model == MODEL_FC600:
-            request_data = { "sTherS": { "SetSystemMode": 4 if mode == HVAC_MODE_HEAT else 3 if mode == HVAC_MODE_COOL else HVAC_MODE_AUTO } }
+            request_data = {
+                "sTherS": {
+                    "SetSystemMode": SystemMode.HEAT
+                    if mode == HVAC_MODE_HEAT
+                    else SystemMode.COOL
+                    if mode == HVAC_MODE_COOL
+                    else SystemMode.AUTO
+                }
+            }
         else:
-            request_data = { "sIT600TH": { "SetHoldType": 7 if mode == HVAC_MODE_OFF else 0 } }
+            request_data = {
+                "sIT600TH": {
+                    "SetHoldType": HoldType.STANDBY
+                    if mode == HVAC_MODE_OFF
+                    else HoldType.FOLLOW_SCHEDULE
+                }
+            }
 
         await self._make_encrypted_request(
             "write",
@@ -1134,13 +1316,24 @@ class IT600Gateway:
     async def set_climate_device_fan_mode(self, device_id: str, mode: str) -> None:
         """Public method for setting the hvac fan mode."""
 
-        device = self.get_climate_device(device_id)
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        if device.fan_modes is None:
+            raise ValueError(f"climate device {device_id!r} does not support fan modes")
+        mode = _validate_supported_value(mode, "mode", device.fan_modes)
 
-        if device is None:
-            _LOGGER.error("Cannot set fan mode: device not found with the specified id: %s", device_id)
-            return
-
-        request_data = { "sFanS": { "FanMode": 5 if mode == FAN_MODE_AUTO else 3 if mode == FAN_MODE_HIGH else 2 if mode == FAN_MODE_MEDIUM else 1 if mode == FAN_MODE_LOW else 0 } }
+        request_data: dict[str, dict[str, int]] = {
+            "sFanS": {
+                "FanMode": FanMode.AUTO
+                if mode == FAN_MODE_AUTO
+                else FanMode.HIGH
+                if mode == FAN_MODE_HIGH
+                else FanMode.MEDIUM
+                if mode == FAN_MODE_MEDIUM
+                else FanMode.LOW
+                if mode == FAN_MODE_LOW
+                else FanMode.OFF
+            }
+        }
 
         await self._make_encrypted_request(
             "write",
@@ -1158,13 +1351,13 @@ class IT600Gateway:
     async def set_climate_device_locked(self, device_id: str, locked: bool) -> None:
         """Public method for setting the hvac locked status."""
 
-        device = self.get_climate_device(device_id)
+        if not isinstance(locked, bool):
+            raise TypeError("locked must be a bool")
 
-        if device is None:
-            _LOGGER.error("Cannot set locked status: device not found with the specified id: %s", device_id)
-            return
-
-        request_data = { "sTherUIS": { "LockKey": 1 if locked else 0 } }
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        request_data: dict[str, dict[str, int]] = {
+            "sTherUIS": {"LockKey": 1 if locked else 0}
+        }
 
         await self._make_encrypted_request(
             "write",
@@ -1182,19 +1375,24 @@ class IT600Gateway:
     async def set_climate_device_temperature(self, device_id: str, setpoint_celsius: float) -> None:
         """Public method for setting the temperature."""
 
-        device = self.get_climate_device(device_id)
-
-        if device is None:
-            _LOGGER.error("Cannot set mode: climate device not found with the specified id: %s", device_id)
-            return
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        setpoint_celsius = _validate_setpoint(
+            setpoint_celsius,
+            device.min_temp,
+            device.max_temp,
+        )
+        rounded_setpoint = int(
+            self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE
+        )
+        request_data: dict[str, dict[str, int]]
 
         if device.model == MODEL_FC600:
-          if device.hvac_mode == HVAC_MODE_COOL:
-              request_data = { "sTherS": { "SetCoolingSetpoint_x100": int(self.round_to_half(setpoint_celsius) * 100) } }
-          else:
-              request_data = { "sTherS": { "SetHeatingSetpoint_x100": int(self.round_to_half(setpoint_celsius) * 100) } }
+            if device.hvac_mode == HVAC_MODE_COOL:
+                request_data = {"sTherS": {"SetCoolingSetpoint_x100": rounded_setpoint}}
+            else:
+                request_data = {"sTherS": {"SetHeatingSetpoint_x100": rounded_setpoint}}
         else:
-          request_data = { "sIT600TH": { "SetHeatingSetpoint_x100": int(self.round_to_half(setpoint_celsius) * 100) } }
+            request_data = {"sIT600TH": {"SetHeatingSetpoint_x100": rounded_setpoint}}
 
         await self._make_encrypted_request(
             "write",
@@ -1215,32 +1413,36 @@ class IT600Gateway:
 
         return round(number * 2) / 2
 
-    async def add_climate_update_callback(self, method: Callable[[Any], Awaitable[None]]) -> None:
+    async def add_climate_update_callback(self, method: UpdateCallback) -> None:
         """Public method to add a climate callback subscriber."""
 
-        self._climate_update_callbacks.append(method)
+        self._climate_update_callbacks.append(_validate_callback(method))
 
-    async def add_binary_sensor_update_callback(self, method: Callable[[Any], Awaitable[None]]) -> None:
+    async def add_binary_sensor_update_callback(self, method: UpdateCallback) -> None:
         """Public method to add a binary sensor callback subscriber."""
 
-        self._binary_sensor_update_callbacks.append(method)
+        self._binary_sensor_update_callbacks.append(_validate_callback(method))
 
-    async def add_switch_update_callback(self, method: Callable[[Any], Awaitable[None]]) -> None:
+    async def add_switch_update_callback(self, method: UpdateCallback) -> None:
         """Public method to add a switch callback subscriber."""
 
-        self._switch_update_callbacks.append(method)
+        self._switch_update_callbacks.append(_validate_callback(method))
 
-    async def add_cover_update_callback(self, method: Callable[[Any], Awaitable[None]]) -> None:
+    async def add_cover_update_callback(self, method: UpdateCallback) -> None:
         """Public method to add a cover callback subscriber."""
 
-        self._cover_update_callbacks.append(method)
+        self._cover_update_callbacks.append(_validate_callback(method))
 
-    async def add_sensor_update_callback(self, method: Callable[[Any], Awaitable[None]]) -> None:
+    async def add_sensor_update_callback(self, method: UpdateCallback) -> None:
         """Public method to add a sensor callback subscriber."""
 
-        self._sensor_update_callbacks.append(method)
+        self._sensor_update_callbacks.append(_validate_callback(method))
 
-    async def _make_encrypted_request(self, command: str, request_body: dict) -> Any:
+    async def _make_encrypted_request(
+        self,
+        command: str,
+        request_body: dict[str, Any],
+    ) -> dict[str, Any]:
         """Makes encrypted Salus iT600 json request, decrypts and returns response."""
 
         async with self._lock:
@@ -1319,7 +1521,7 @@ class IT600Gateway:
 
         return self
 
-    async def __aexit__(self, *exc_info) -> None:
+    async def __aexit__(self, *exc_info: object) -> None:
         """Async exit."""
 
         await self.close()

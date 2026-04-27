@@ -66,6 +66,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .const import HoldType, RunningState, SystemMode
+
 MODEL_FC600 = "FC600"
 MODEL_SP600 = "SP600"
 MODEL_SPE600 = "SPE600"
@@ -91,17 +93,17 @@ BINARY_SENSOR_DEVICE_CLASSES = {
 OUTLET_MODELS = {MODEL_SP600, MODEL_SPE600}
 SKIPPED_BINARY_SENSOR_MODELS = {MODEL_BUTTON}
 
-SQ610_MODE_AUTO = 1
-SQ610_MODE_COOL = 3
-SQ610_MODE_HEAT = 4
-SQ610_MODE_EMERGENCY_HEAT = 5
+SQ610_MODE_AUTO = SystemMode.AUTO
+SQ610_MODE_COOL = SystemMode.COOL
+SQ610_MODE_HEAT = SystemMode.HEAT
+SQ610_MODE_EMERGENCY_HEAT = SystemMode.EMERGENCY_HEAT
 
-SQ610_HOLD_AUTO = 0
-SQ610_HOLD_PERMANENT = 2
-SQ610_HOLD_STANDBY = 7
+SQ610_HOLD_AUTO = HoldType.FOLLOW_SCHEDULE
+SQ610_HOLD_PERMANENT = HoldType.PERMANENT_HOLD
+SQ610_HOLD_STANDBY = HoldType.STANDBY
 
-SQ610_RUNNING_HEAT = 1
-SQ610_RUNNING_COOL = 2
+SQ610_RUNNING_HEAT = RunningState.HEATING
+SQ610_RUNNING_COOL = RunningState.COOLING
 
 SQ610_WRITE_HEATING_SETPOINT = "SetHeatingSetpoint_x100"
 SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
@@ -222,6 +224,8 @@ def binary_sensor_device_class(model: str | None) -> str | None:
         >>> binary_sensor_device_class("WLS600")
         "moisture"
     """
+    if model is None:
+        return None
     return BINARY_SENSOR_DEVICE_CLASSES.get(model)
 
 

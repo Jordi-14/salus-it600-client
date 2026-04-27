@@ -1,10 +1,17 @@
 """Constants for the Salus iT600 smart devices."""
 
+from enum import IntEnum
+
 # Degree units
 DEGREE = "°"
 
 # Temperature units
 TEMP_CELSIUS = f"{DEGREE}C"
+TEMPERATURE_SCALE = 100
+
+# Cover positions
+COVER_POSITION_MIN = 0
+COVER_POSITION_MAX = 100
 
 # States
 STATE_UNKNOWN = "unknown"
@@ -46,3 +53,42 @@ FAN_MODE_HIGH = "High"
 FAN_MODE_MEDIUM = "Medium"
 FAN_MODE_LOW = "Low"
 FAN_MODE_OFF = "Off"
+
+
+class HoldType(IntEnum):
+    """Gateway hold/preset values."""
+
+    FOLLOW_SCHEDULE = 0
+    TEMPORARY_HOLD = 1
+    PERMANENT_HOLD = 2
+    STANDBY = 7
+    ECO = 10
+
+
+class SystemMode(IntEnum):
+    """Gateway HVAC system mode values."""
+
+    AUTO = 1
+    COOL = 3
+    HEAT = 4
+    EMERGENCY_HEAT = 5
+
+
+class RunningState(IntEnum):
+    """Gateway HVAC running-state values seen across supported devices."""
+
+    IDLE = 0
+    HEATING = 1
+    COOLING = 2
+    FAN_COIL_HEATING = 33
+    FAN_COIL_COOLING = 66
+
+
+class FanMode(IntEnum):
+    """Gateway fan-speed values."""
+
+    OFF = 0
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+    AUTO = 5

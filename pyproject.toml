@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "salus-it600-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Asynchronous Python client for Salus iT600 local gateways"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,15 @@ dependencies = [
   "cryptography>=42.0.0"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "build",
+  "mypy",
+  "pre-commit",
+  "ruff",
+  "twine"
+]
+
 [project.urls]
 Homepage = "https://github.com/Jordi-14/salus-it600-client"
 Issues = "https://github.com/Jordi-14/salus-it600-client/issues"
@@ -37,3 +46,16 @@ Original = "https://github.com/epoplavskis/pyit600"
 
 [tool.setuptools.packages.find]
 include = ["salus_it600", "salus_it600.*"]
+
+[tool.mypy]
+files = ["salus_it600"]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = [
+  "cryptography.*"
+]
+ignore_missing_imports = true

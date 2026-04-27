@@ -5,8 +5,6 @@ Asynchronous Python client for Salus iT600 devices.
 ## For end users
 See https://github.com/Jordi-14/homeassistant_salus to use this in Home Assistant.
 
-FHEM users might be interested in https://github.com/dominikkarall/fhempy which provides subset of functionality.
-
 ## About
 
 This package allows you to control and monitor your Salus iT600 smart home devices locally through Salus UG600 universal gateway. Currently heating thermostats, binary sensors, temperature sensors, covers and switches are supported. You have any other devices and would like to contribute - you are welcome to create an issue or submit a pull request.
