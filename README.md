@@ -139,6 +139,9 @@ For each type: _refresh_device_collection()
     └─ Update internal device dicts + callbacks
 ```
 
+Detailed protocol notes are maintained in
+[docs/device-protocol.md](docs/device-protocol.md).
+
 Device models are identified by **protocol signatures** in the JSON payloads:
 
 - **Climate**: `sIT600TH` or `sTherS` section present
@@ -332,6 +335,27 @@ All SQ610 protocol constants are centralized in `salus_it600/device_models.py` a
 ### Contributing
 
 If you want to help to get your device supported, open GitHub issue and add your device model number and output of `main.py` program. Be sure to run this program with --debug option.
+
+### Development Checks
+
+Install development dependencies:
+
+```bash
+python3 -m pip install -e ".[dev]"
+```
+
+Run the local verification set before opening a PR:
+
+```bash
+python3 -m ruff check salus_it600 tests main.py
+python3 -m mypy
+python3 -m unittest
+python3 -m coverage run -m unittest
+python3 -m coverage report
+```
+
+The test suite covers request validation, device parsing, complete mocked
+polling cycles, callbacks, and write-command state transitions.
 
 Release publishing is documented in [RELEASE.md](RELEASE.md).
 

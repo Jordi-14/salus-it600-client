@@ -32,6 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "build",
+  "coverage[toml]",
   "mypy",
   "pre-commit",
   "ruff",
@@ -59,3 +60,12 @@ module = [
   "cryptography.*"
 ]
 ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["salus_it600"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = true

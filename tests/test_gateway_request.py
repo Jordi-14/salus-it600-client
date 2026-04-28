@@ -14,6 +14,7 @@ from salus_it600.const import (
     HVAC_MODE_AUTO,
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
+    HVAC_MODE_OFF,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
@@ -58,6 +59,9 @@ class FakeSession:
         if self.error is not None:
             raise self.error
         return FakeResponse(self.payload)
+
+    async def get(self, url: str) -> FakeResponse:
+        return FakeResponse({})
 
 
 def make_gateway(session: FakeSession) -> IT600Gateway:
@@ -197,6 +201,30 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("non-object device entries", str(context.exception))
 
+    async def test_connect_returns_gateway_mac(self):
+        session = FakeSession(
+            {
+                "status": "success",
+                "id": [
+                    {"sGateway": {"NetworkLANMAC": "AA:BB:CC:DD:EE:FF"}},
+                ],
+            }
+        )
+        gateway = make_gateway(session)
+
+        mac = await gateway.connect()
+
+        self.assertEqual("AA:BB:CC:DD:EE:FF", mac)
+
+    async def test_connect_rejects_response_without_gateway_info(self):
+        session = FakeSession({"status": "success", "id": []})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600CommandError) as context:
+            await gateway.connect()
+
+        self.assertIn("response did not contain gateway information", str(context.exception))
+
     async def test_set_climate_device_fan_mode_maps_medium_mode(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
@@ -208,6 +236,64 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("write", request["requestAttr"])
         self.assertEqual({"FanMode": 2}, request["id"][0]["sFanS"])
         self.assertEqual({"UniID": "climate-1"}, request["id"][0]["data"])
+
+    async def test_set_it600_climate_mode_off_writes_standby_hold(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()._replace(
+            model="HTRP-RF(50)",
+            hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+        )
+
+        await gateway.set_climate_device_mode("climate-1", HVAC_MODE_OFF)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 7}, request["id"][0]["sIT600TH"])
+
+    async def test_set_fc600_climate_mode_cool_writes_system_mode(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        await gateway.set_climate_device_mode("climate-1", HVAC_MODE_COOL)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetSystemMode": 3}, request["id"][0]["sTherS"])
+
+    async def test_set_fc600_eco_preset_writes_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        await gateway.set_climate_device_preset("climate-1", PRESET_ECO)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 10}, request["id"][0]["sComm"])
+
+    async def test_set_fc600_temperature_in_cool_mode_writes_cooling_setpoint(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()._replace(
+            hvac_mode=HVAC_MODE_COOL,
+        )
+
+        await gateway.set_climate_device_temperature("climate-1", 22.3)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetCoolingSetpoint_x100": 2250},
+            request["id"][0]["sTherS"],
+        )
+
+    async def test_set_climate_device_locked_writes_lock_key(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        await gateway.set_climate_device_locked("climate-1", True)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"LockKey": 1}, request["id"][0]["sTherUIS"])
 
     async def test_public_commands_reject_blank_device_id(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
@@ -255,6 +341,13 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ValueError):
             await gateway.set_climate_device_temperature("climate-1", 50.0)
+
+    async def test_callback_registration_rejects_non_callable(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+
+        with self.assertRaises(TypeError):
+            await gateway.add_switch_update_callback("not-callable")
 
 
 if __name__ == "__main__":
