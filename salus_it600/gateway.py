@@ -159,6 +159,15 @@ def _validate_callback(method: UpdateCallback) -> UpdateCallback:
     return method
 
 
+async def _notify_update_callbacks(
+    callbacks: Sequence[UpdateCallback],
+    device_id: str,
+) -> None:
+    """Notify registered update callbacks for one refreshed device."""
+    for update_callback in callbacks:
+        await update_callback(device_id=device_id)
+
+
 def _device_name(device_status: dict[str, Any], unique_id: str | None) -> str:
     """Return a device name from a raw Salus gateway payload."""
     default_name = unique_id or "Unknown"
@@ -509,8 +518,11 @@ def _parse_it600th_climate_device(
         KeyError: If required sIT600TH fields missing (caught as PARSING_EXCEPTIONS)
     """
     model = model_identifier(device_status)
+    raw_humidity = th.get("SunnySetpoint_x100")
     current_humidity = (
-        th.get("SunnySetpoint_x100") if is_sq610_model(model) else None
+        raw_humidity / TEMPERATURE_SCALE
+        if is_sq610_model(model) and isinstance(raw_humidity, int | float)
+        else None
     )
     hold_type = _hold_type(th, unique_id)
     running_state = th.get("RunningState", DEFAULT_RUNNING_STATE)
@@ -683,6 +695,8 @@ def _parse_climate_device(device_status: dict[str, Any]) -> ClimateDevice | None
 
 
 class IT600Gateway:
+    """Async client for one Salus UG600 local gateway."""
+
     def __init__(
             self,
             euid: str,
@@ -692,6 +706,18 @@ class IT600Gateway:
             session: aiohttp.ClientSession | None = None,
             debug: bool = False,
     ) -> None:
+        """Create a gateway client.
+
+        Args:
+            euid: Gateway EUID printed on the gateway label, or the fallback
+                zero EUID accepted by some installations.
+            host: Gateway hostname or local IP address.
+            port: Local gateway HTTP port.
+            request_timeout: Per-request timeout in seconds.
+            session: Optional externally managed aiohttp session.
+            debug: Log raw encrypted-command JSON before encryption and after
+                decryption.
+        """
         euid = _validate_non_empty_string(euid, "euid")
         host = _validate_non_empty_string(host, "host")
         port = _validate_int_range(port, "port", 1, 65535)
@@ -707,7 +733,6 @@ class IT600Gateway:
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
 
-        """Initialize connection with the iT600 gateway."""
         self._session = session
         self._close_session = False
 
@@ -729,8 +754,14 @@ class IT600Gateway:
         self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
-        """Public method for connecting to Salus universal gateway.
-           On successful connection, returns gateway's mac address"""
+        """Validate gateway access and return the gateway MAC address.
+
+        Raises:
+            IT600ConnectionError: If the gateway cannot be reached.
+            IT600AuthenticationError: If the gateway answers but rejects the
+                encrypted request, usually due to an invalid EUID.
+            IT600CommandError: If the gateway response has no gateway device.
+        """
 
         _LOGGER.debug("Trying to connect to gateway at %s", self._host)
 
@@ -782,7 +813,13 @@ class IT600Gateway:
             ) from ae
 
     async def poll_status(self, send_callback: bool = False) -> None:
-        """Public method for polling the state of Salus iT600 devices."""
+        """Refresh all known device collections from the gateway.
+
+        The method performs a `readall` discovery request, then detailed
+        `deviceid` requests for each supported device family. Invalid individual
+        devices are logged and skipped; gateway communication errors propagate
+        to the caller.
+        """
 
         all_devices = await self._make_encrypted_request(
             "read",
@@ -1030,47 +1067,30 @@ class IT600Gateway:
     async def _send_climate_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
 
-        if self._climate_update_callbacks:
-            for update_callback in self._climate_update_callbacks:
-                await update_callback(device_id=device_id)
-        else:
-            _LOGGER.error("Callback for climate updates has not been set")
+        await _notify_update_callbacks(self._climate_update_callbacks, device_id)
 
     async def _send_binary_sensor_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
 
-        if self._binary_sensor_update_callbacks:
-            for update_callback in self._binary_sensor_update_callbacks:
-                await update_callback(device_id=device_id)
-        else:
-            _LOGGER.error("Callback for binary sensor updates has not been set")
+        await _notify_update_callbacks(
+            self._binary_sensor_update_callbacks,
+            device_id,
+        )
 
     async def _send_switch_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
 
-        if self._switch_update_callbacks:
-            for update_callback in self._switch_update_callbacks:
-                await update_callback(device_id=device_id)
-        else:
-            _LOGGER.error("Callback for switch updates has not been set")
+        await _notify_update_callbacks(self._switch_update_callbacks, device_id)
 
     async def _send_cover_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
 
-        if self._cover_update_callbacks:
-            for update_callback in self._cover_update_callbacks:
-                await update_callback(device_id=device_id)
-        else:
-            _LOGGER.error("Callback for cover updates has not been set")
+        await _notify_update_callbacks(self._cover_update_callbacks, device_id)
 
     async def _send_sensor_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
 
-        if self._sensor_update_callbacks:
-            for update_callback in self._sensor_update_callbacks:
-                await update_callback(device_id=device_id)
-        else:
-            _LOGGER.error("Callback for sensor updates has not been set")
+        await _notify_update_callbacks(self._sensor_update_callbacks, device_id)
 
     @staticmethod
     def _validate_device_id(device_id: str) -> str:
@@ -1094,67 +1114,67 @@ class IT600Gateway:
         return device
 
     def get_gateway_device(self) -> GatewayDevice | None:
-        """Public method to return gateway device."""
+        """Return the cached gateway device, if `poll_status()` has found it."""
 
         return self._gateway_device
 
     def get_climate_devices(self) -> dict[str, ClimateDevice]:
-        """Public method to return the state of all Salus IT600 climate devices."""
+        """Return cached climate devices keyed by unique device ID."""
 
         return self._climate_devices
 
     def get_climate_device(self, device_id: str) -> ClimateDevice | None:
-        """Public method to return the state of the specified climate device."""
+        """Return one cached climate device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
         return self._climate_devices.get(device_id)
 
     def get_binary_sensor_devices(self) -> dict[str, BinarySensorDevice]:
-        """Public method to return the state of all Salus IT600 binary sensor devices."""
+        """Return cached binary sensor devices keyed by unique device ID."""
 
         return self._binary_sensor_devices
 
     def get_binary_sensor_device(self, device_id: str) -> BinarySensorDevice | None:
-        """Public method to return the state of the specified binary sensor device."""
+        """Return one cached binary sensor device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
         return self._binary_sensor_devices.get(device_id)
 
     def get_switch_devices(self) -> dict[str, SwitchDevice]:
-        """Public method to return the state of all Salus IT600 switch devices."""
+        """Return cached switch devices keyed by unique device ID."""
 
         return self._switch_devices
 
     def get_switch_device(self, device_id: str) -> SwitchDevice | None:
-        """Public method to return the state of the specified switch device."""
+        """Return one cached switch device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
         return self._switch_devices.get(device_id)
 
     def get_cover_devices(self) -> dict[str, CoverDevice]:
-        """Public method to return the state of all Salus IT600 cover devices."""
+        """Return cached cover devices keyed by unique device ID."""
 
         return self._cover_devices
 
     def get_cover_device(self, device_id: str) -> CoverDevice | None:
-        """Public method to return the state of the specified cover device."""
+        """Return one cached cover device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
         return self._cover_devices.get(device_id)
 
     def get_sensor_devices(self) -> dict[str, SensorDevice]:
-        """Public method to return the state of all Salus IT600 sensor devices."""
+        """Return cached sensor devices keyed by unique device ID."""
 
         return self._sensor_devices
 
     def get_sensor_device(self, device_id: str) -> SensorDevice | None:
-        """Public method to return the state of the specified sensor device."""
+        """Return one cached sensor device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
         return self._sensor_devices.get(device_id)
 
     async def set_cover_position(self, device_id: str, position: int) -> None:
-        """Public method to set position/level (where 0 means closed and 100 is fully open) on the specified cover device."""
+        """Move a cover to a position where 0 is closed and 100 is open."""
 
         position = _validate_int_range(
             position,
@@ -1180,17 +1200,17 @@ class IT600Gateway:
         )
 
     async def open_cover(self, device_id: str) -> None:
-        """Public method to open the specified cover device."""
+        """Open a cover fully."""
 
         await self.set_cover_position(device_id, COVER_POSITION_MAX)
 
     async def close_cover(self, device_id: str) -> None:
-        """Public method to close the specified cover device."""
+        """Close a cover fully."""
 
         await self.set_cover_position(device_id, COVER_POSITION_MIN)
 
     async def turn_on_switch_device(self, device_id: str) -> None:
-        """Public method to turn on the specified switch device."""
+        """Turn on a switch or relay device."""
 
         device = self._require_device(device_id, self._switch_devices, "switch")
 
@@ -1210,7 +1230,7 @@ class IT600Gateway:
         )
 
     async def turn_off_switch_device(self, device_id: str) -> None:
-        """Public method to turn off the specified switch device."""
+        """Turn off a switch or relay device."""
 
         device = self._require_device(device_id, self._switch_devices, "switch")
 
@@ -1230,7 +1250,7 @@ class IT600Gateway:
         )
 
     async def set_climate_device_preset(self, device_id: str, preset: str) -> None:
-        """Public method for setting the hvac preset."""
+        """Set a climate preset/hold mode supported by the target device."""
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         preset = _validate_supported_value(preset, "preset", device.preset_modes)
@@ -1275,7 +1295,7 @@ class IT600Gateway:
         )
 
     async def set_climate_device_mode(self, device_id: str, mode: str) -> None:
-        """Public method for setting the hvac mode."""
+        """Set a climate HVAC mode supported by the target device."""
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         mode = _validate_supported_value(mode, "mode", device.hvac_modes)
@@ -1314,7 +1334,7 @@ class IT600Gateway:
         )
 
     async def set_climate_device_fan_mode(self, device_id: str, mode: str) -> None:
-        """Public method for setting the hvac fan mode."""
+        """Set an FC600 fan mode supported by the target device."""
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         if device.fan_modes is None:
@@ -1349,7 +1369,7 @@ class IT600Gateway:
         )
 
     async def set_climate_device_locked(self, device_id: str, locked: bool) -> None:
-        """Public method for setting the hvac locked status."""
+        """Enable or disable the FC600 keypad lock."""
 
         if not isinstance(locked, bool):
             raise TypeError("locked must be a bool")
@@ -1373,7 +1393,7 @@ class IT600Gateway:
         )
 
     async def set_climate_device_temperature(self, device_id: str, setpoint_celsius: float) -> None:
-        """Public method for setting the temperature."""
+        """Set a climate target temperature in Celsius."""
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         setpoint_celsius = _validate_setpoint(
@@ -1409,32 +1429,32 @@ class IT600Gateway:
 
     @staticmethod
     def round_to_half(number: float) -> float:
-        """Rounds number to half of the integer (eg. 1.01 -> 1, 1.4 -> 1.5, 1.8 -> 2)"""
+        """Round a number to the nearest half step."""
 
         return round(number * 2) / 2
 
     async def add_climate_update_callback(self, method: UpdateCallback) -> None:
-        """Public method to add a climate callback subscriber."""
+        """Register an async callback called after climate device refreshes."""
 
         self._climate_update_callbacks.append(_validate_callback(method))
 
     async def add_binary_sensor_update_callback(self, method: UpdateCallback) -> None:
-        """Public method to add a binary sensor callback subscriber."""
+        """Register an async callback called after binary sensor refreshes."""
 
         self._binary_sensor_update_callbacks.append(_validate_callback(method))
 
     async def add_switch_update_callback(self, method: UpdateCallback) -> None:
-        """Public method to add a switch callback subscriber."""
+        """Register an async callback called after switch refreshes."""
 
         self._switch_update_callbacks.append(_validate_callback(method))
 
     async def add_cover_update_callback(self, method: UpdateCallback) -> None:
-        """Public method to add a cover callback subscriber."""
+        """Register an async callback called after cover refreshes."""
 
         self._cover_update_callbacks.append(_validate_callback(method))
 
     async def add_sensor_update_callback(self, method: UpdateCallback) -> None:
-        """Public method to add a sensor callback subscriber."""
+        """Register an async callback called after sensor refreshes."""
 
         self._sensor_update_callbacks.append(_validate_callback(method))
 
@@ -1511,17 +1531,17 @@ class IT600Gateway:
                 raise
 
     async def close(self) -> None:
-        """Close open client session."""
+        """Close the internally owned aiohttp session, if one was created."""
 
         if self._session and self._close_session:
             await self._session.close()
 
     async def __aenter__(self) -> "IT600Gateway":
-        """Async enter."""
+        """Return this gateway for use as an async context manager."""
 
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
-        """Async exit."""
+        """Close internally owned resources on async context-manager exit."""
 
         await self.close()
