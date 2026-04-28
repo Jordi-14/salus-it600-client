@@ -46,7 +46,11 @@ from .exceptions import (
     IT600AuthenticationError,
     IT600CommandError,
     IT600ConnectionError,
+    IT600UnsupportedFirmwareError,
 )
+from .protocol import GatewayProtocol
+from .protocol_aes_cbc import AesCbcProtocol
+from .protocol_aes_ccm import AesCcmProtocol
 from .device_models import (
     MODEL_FC600,
     is_binary_sensor_summary,
@@ -160,6 +164,21 @@ async def _notify_update_callbacks(
         await update_callback(device_id=device_id)
 
 
+def _gateway_mac_from_readall(response: dict[str, Any]) -> str | None:
+    """Return gateway MAC from a readall response, if present."""
+    devices = response.get("id", [])
+    if not isinstance(devices, list):
+        return None
+
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        gateway_mac = device.get("sGateway", {}).get("NetworkLANMAC")
+        if isinstance(gateway_mac, str) and gateway_mac:
+            return gateway_mac
+    return None
+
+
 def _validate_gateway_response(response: Any, context: str) -> dict[str, Any]:
     """Validate that a gateway response is a JSON object with a status field."""
     if not isinstance(response, dict):
@@ -269,7 +288,9 @@ class IT600Gateway:
             "request_timeout",
         )
 
+        self._euid = euid
         self._encryptor = IT600Encryptor(euid)
+        self._protocol: GatewayProtocol | None = None
         self._host = host
         self._port = port
         self._request_timeout = request_timeout
@@ -316,6 +337,9 @@ class IT600Gateway:
             self._session = aiohttp.ClientSession()
             self._close_session = True
 
+        if type(self._encryptor) is IT600Encryptor:
+            return await self._connect_with_protocol_detection()
+
         try:
             all_devices = await self._make_encrypted_request(
                 "read", {"requestAttr": "readall"}
@@ -355,6 +379,73 @@ class IT600Gateway:
                 "Error occurred while communicating with iT600 gateway: "
                 "check if you have specified EUID correctly"
             ) from ae
+
+    def _protocol_candidates(self) -> list[GatewayProtocol]:
+        """Return protocol candidates in the order they should be attempted."""
+        candidates: list[GatewayProtocol] = [
+            AesCbcProtocol(self._euid),
+            AesCbcProtocol(self._euid, aes128=True),
+        ]
+        try:
+            candidates.append(AesCcmProtocol(self._euid))
+        except ValueError:
+            _LOGGER.debug("Skipping AES-CCM candidate because EUID is not hex")
+        return candidates
+
+    async def _connect_with_protocol_detection(self) -> str:
+        """Detect the gateway encryption protocol and return the gateway MAC."""
+        assert self._session is not None
+        result: dict[str, Any] | None = None
+        saw_reject = False
+        saw_new_protocol = False
+
+        for protocol in self._protocol_candidates():
+            try:
+                _LOGGER.debug("Trying Salus protocol: %s", protocol.name)
+                result = await protocol.connect(
+                    self._session,
+                    self._host,
+                    self._port,
+                    self._request_timeout,
+                )
+                self._protocol = protocol
+                _LOGGER.debug("Salus protocol %s succeeded", protocol.name)
+                break
+            except Exception as exc:
+                message = str(exc).lower()
+                _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
+                if "reject frame" in message:
+                    saw_reject = True
+                if "new-protocol frame" in message:
+                    saw_new_protocol = True
+
+        if result is not None:
+            gateway_mac = _gateway_mac_from_readall(result)
+            if gateway_mac is not None:
+                return gateway_mac
+            raise IT600CommandError(
+                "Error occurred while communicating with iT600 gateway: "
+                "response did not contain gateway information"
+            )
+
+        try:
+            async with asyncio.timeout(self._request_timeout):
+                await self._session.get(f"http://{self._host}:{self._port}/")
+        except (asyncio.TimeoutError, client_exceptions.ClientError) as exc:
+            raise IT600ConnectionError(
+                "Error occurred while communicating with iT600 gateway: "
+                "check if you have specified host/IP address correctly"
+            ) from exc
+
+        if saw_reject or saw_new_protocol:
+            raise IT600UnsupportedFirmwareError(
+                "Gateway is reachable but uses an unsupported encryption protocol"
+            )
+
+        raise IT600AuthenticationError(
+            "Error occurred while communicating with iT600 gateway: "
+            "check if you have specified EUID correctly"
+        )
 
     async def poll_status(self, send_callback: bool = False) -> None:
         """Refresh all known device collections from the gateway.
@@ -1258,14 +1349,24 @@ class IT600Gateway:
                         "Gateway request: POST %s\n%s\n", request_url, request_body_json
                     )
 
+                if self._protocol is not None:
+                    request_payload = self._protocol.wrap_request(request_body_json)
+                else:
+                    request_payload = self._encryptor.encrypt(request_body_json)
+
                 async with asyncio.timeout(self._request_timeout):
                     resp = await self._session.post(
                         request_url,
-                        data=self._encryptor.encrypt(request_body_json),
+                        data=request_payload,
                         headers={"content-type": "application/json"},
                     )
                     response_bytes = await resp.read()
-                    response_json_string = self._encryptor.decrypt(response_bytes)
+                    if self._protocol is not None:
+                        response_json_string = self._protocol.unwrap_response(
+                            response_bytes
+                        )
+                    else:
+                        response_json_string = self._encryptor.decrypt(response_bytes)
 
                     if self._debug:
                         _LOGGER.debug("Gateway response:\n%s\n", response_json_string)

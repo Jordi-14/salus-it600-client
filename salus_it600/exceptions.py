@@ -23,3 +23,9 @@ class IT600ConnectionError(IT600Error):
     """Salus iT600 connection exception."""
 
     pass
+
+
+class IT600UnsupportedFirmwareError(IT600Error):
+    """Salus gateway firmware uses an unsupported protocol."""
+
+    pass
