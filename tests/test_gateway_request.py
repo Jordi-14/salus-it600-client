@@ -295,6 +295,54 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"LockKey": 1}, request["id"][0]["sTherUIS"])
 
+    async def test_fetch_sq610_properties_returns_flattened_raw_payload(self):
+        session = FakeSession(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        "data": {"UniID": "sq610-1"},
+                        "sIT600TH": {
+                            "SystemMode": 3,
+                            "CoolingSetpoint_x100": 2200,
+                        },
+                    }
+                ],
+            }
+        )
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = make_climate_device(
+            "sq610-1"
+        )._replace(model="SQ610RF")
+
+        raw_props = await gateway.fetch_sq610_properties(["sq610-1"])
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual("deviceid", request["requestAttr"])
+        self.assertEqual({"UniID": "sq610-1"}, request["id"][0]["data"])
+        self.assertEqual(
+            {
+                "UniID": "sq610-1",
+                "SystemMode": 3,
+                "CoolingSetpoint_x100": 2200,
+            },
+            raw_props["sq610-1"],
+        )
+
+    async def test_write_sq610_property_writes_sit600th_payload(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = make_climate_device(
+            "sq610-1"
+        )._replace(model="SQ610RF")
+
+        await gateway.write_sq610_property("sq610-1", "SetSystemMode", 3)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual("write", request["requestAttr"])
+        self.assertEqual({"UniID": "sq610-1"}, request["id"][0]["data"])
+        self.assertEqual({"SetSystemMode": 3}, request["id"][0]["sIT600TH"])
+
     async def test_public_commands_reject_blank_device_id(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
