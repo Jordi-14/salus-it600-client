@@ -41,6 +41,7 @@ class ClimateDevice(NamedTuple):
     manufacturer: str
     model: str | None
     sw_version: str | None
+    extra_state_attributes: dict[str, Any] | None = None
 
 
 class BinarySensorDevice(NamedTuple):
@@ -53,6 +54,9 @@ class BinarySensorDevice(NamedTuple):
     manufacturer: str
     model: str | None
     sw_version: str | None
+    parent_unique_id: str | None = None
+    entity_category: str | None = None
+    extra_state_attributes: dict[str, Any] | None = None
 
 
 class SwitchDevice(NamedTuple):
@@ -94,3 +98,5 @@ class SensorDevice(NamedTuple):
     manufacturer: str
     model: str | None
     sw_version: str | None
+    parent_unique_id: str | None = None
+    entity_category: str | None = None

@@ -92,3 +92,62 @@ class FanMode(IntEnum):
     MEDIUM = 2
     HIGH = 3
     AUTO = 5
+
+
+BATTERY_LEVEL_MAP: dict[int, int] = {
+    0: 0,
+    1: 10,
+    2: 25,
+    3: 50,
+    4: 75,
+    5: 100,
+}
+
+BATTERY_VOLTAGE_THRESHOLDS: dict[str, list[tuple[float, int, str]]] = {
+    "window": [
+        (2.6, 100, "full"),
+        (2.3, 50, "half"),
+        (2.1, 25, "low"),
+        (0.0, 0, "critical"),
+    ],
+    "door": [
+        (2.9, 100, "full"),
+        (2.8, 50, "half"),
+        (2.2, 25, "low"),
+        (0.0, 0, "critical"),
+    ],
+    "energy_meter": [
+        (5.2, 100, "full"),
+        (4.6, 50, "half"),
+        (4.2, 25, "low"),
+        (0.0, 0, "critical"),
+    ],
+    "trv": [
+        (2.7, 100, "full"),
+        (2.4, 50, "half"),
+        (2.2, 25, "low"),
+        (0.0, 0, "critical"),
+    ],
+}
+
+THERMOSTAT_ERROR_CODES: dict[str, str] = {
+    "Error01": "Paired TRV hardware issue",
+    "Error02": "Floor sensor overheating",
+    "Error03": "Floor sensor open",
+    "Error04": "Floor sensor short",
+    "Error05": "Lost link with ZigBee Coordinator",
+    "Error06": "Lost link with Wiring Center KL08RF",
+    "Error07": "Lost link with TRV",
+    "Error08": "Lost link with RX10RF (RX1)",
+    "Error09": "Lost link with RX10RF (RX2)",
+    "Error21": "Paired TRV lost link with Coordinator",
+    "Error22": "Paired TRV low battery",
+    "Error23": "Message from unpaired TRV",
+    "Error24": "Rejected by Wiring Centre",
+    "Error25": "Lost link with Parent",
+    "Error30": "Paired TRV gear issue",
+    "Error31": "Paired TRV adaptation issue",
+    "Error32": "Low battery",
+}
+
+BATTERY_ERROR_CODES: frozenset[str] = frozenset({"Error22", "Error32"})

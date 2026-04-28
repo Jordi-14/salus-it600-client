@@ -143,12 +143,20 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("AA:BB:CC:DD:EE:FF", gateway.get_gateway_device().unique_id)
         self.assertIn("thermo_1", gateway.get_climate_devices())
+        self.assertIn("thermo_1_problem", gateway.get_binary_sensor_devices())
         self.assertIn("leak_1", gateway.get_binary_sensor_devices())
         self.assertIn("sensor_1_temp", gateway.get_sensor_devices())
         self.assertIn("switch_1_2", gateway.get_switch_devices())
         self.assertIn("cover_1", gateway.get_cover_devices())
         self.assertEqual(
-            ["thermo_1", "leak_1", "sensor_1_temp", "switch_1_2", "cover_1"],
+            [
+                "thermo_1",
+                "thermo_1_problem",
+                "leak_1",
+                "sensor_1_temp",
+                "switch_1_2",
+                "cover_1",
+            ],
             callback_events,
         )
         self.assertEqual(

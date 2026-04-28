@@ -4,12 +4,15 @@ import unittest
 
 from salus_it600.const import (
     CURRENT_HVAC_COOL,
+    CURRENT_HVAC_HEAT,
     CURRENT_HVAC_OFF,
     FAN_MODE_HIGH,
     HVAC_MODE_COOL,
+    HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
     PRESET_ECO,
     PRESET_OFF,
+    PRESET_PERMANENT_HOLD,
 )
 from salus_it600.exceptions import IT600CommandError
 from salus_it600.gateway import IT600Gateway
@@ -65,6 +68,41 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(device.is_on)
         self.assertEqual("outlet", device.device_class)
 
+    async def test_switch_parser_adds_power_and_energy_sensors(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        "data": {"UniID": "switch_1", "Endpoint": 2},
+                        "sOnOffS": {"OnOff": 1},
+                        "sMeteringS": {
+                            "InstantaneousDemand": 42,
+                            "CurrentSummationDelivered": 12345,
+                        },
+                        "sZDO": {"DeviceName": '{"deviceName": "Kitchen Plug"}'},
+                        "sZDOInfo": {"OnlineStatus_i": 1},
+                        "sBasicS": {"ManufactureName": "SALUS"},
+                        "DeviceL": {"ModelIdentifier_i": "SPE600"},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_switch_devices(
+            [{"data": {"UniID": "switch_1", "Endpoint": 2}}],
+        )
+
+        power = gateway.get_sensor_device("switch_1_2_power")
+        energy = gateway.get_sensor_device("switch_1_2_energy")
+        self.assertIsNotNone(power)
+        self.assertEqual(42, power.state)
+        self.assertEqual("W", power.unit_of_measurement)
+        self.assertEqual("switch_1_2", power.parent_unique_id)
+        self.assertIsNotNone(energy)
+        self.assertEqual(12.345, energy.state)
+        self.assertEqual("kWh", energy.unit_of_measurement)
+
     async def test_sensor_parser_adds_temperature_suffix(self):
         gateway = make_gateway_with_response(
             {
@@ -91,6 +129,34 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("Hall Sensor", device.name)
         self.assertEqual(22.15, device.state)
         self.assertEqual("temperature", device.device_class)
+
+    async def test_sensor_parser_adds_humidity_and_battery_children(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sensor_1", "TS600"),
+                        "sTempS": {"MeasuredValue_x100": 2215},
+                        "sRelativeHumidity": {"MeasuredValue_x100": 4550},
+                        "sPowerS": {"BatteryVoltage_x10": 29},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_sensor_devices(
+            [{"data": {"UniID": "sensor_1", "Endpoint": 1}}],
+        )
+
+        humidity = gateway.get_sensor_device("sensor_1_humidity")
+        battery = gateway.get_sensor_device("sensor_1_battery")
+        self.assertIsNotNone(humidity)
+        self.assertEqual(45.5, humidity.state)
+        self.assertEqual("sensor_1", humidity.parent_unique_id)
+        self.assertIsNotNone(battery)
+        self.assertEqual(100, battery.state)
+        self.assertEqual("diagnostic", battery.entity_category)
 
     async def test_binary_sensor_parser_uses_model_device_class(self):
         gateway = make_gateway_with_response(
@@ -180,7 +246,34 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         device = gateway.get_binary_sensor_device("trv_1")
         self.assertIsNotNone(device)
         self.assertTrue(device.is_on)
-        self.assertEqual("valve", device.device_class)
+        self.assertEqual("heat", device.device_class)
+
+    async def test_binary_sensor_adds_low_battery_diagnostic(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("window_1", "SW600"),
+                        "sIASZS": {
+                            "ErrorIASZSAlarmed1": 0,
+                            "ErrorIASZSLowBattery": 1,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_binary_sensor_devices(
+            [{"data": {"UniID": "window_1"}}],
+        )
+
+        low_battery = gateway.get_binary_sensor_device("window_1_low_battery")
+        self.assertIsNotNone(low_battery)
+        self.assertTrue(low_battery.is_on)
+        self.assertEqual("battery", low_battery.device_class)
+        self.assertEqual("diagnostic", low_battery.entity_category)
+        self.assertEqual("window_1", low_battery.parent_unique_id)
 
     async def test_button_model_is_not_exposed_as_binary_sensor(self):
         gateway = make_gateway_with_response(
@@ -278,6 +371,51 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(device)
         self.assertEqual(45.5, device.current_humidity)
 
+    async def test_sq610_adds_floor_battery_and_problem_children(self):
+        status_d = "0" * 12 + "2134" + "0" * 83 + "4" + "0" * 10
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_1", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "SunnySetpoint_x100": 4550,
+                            "Status_d": status_d,
+                            "OUTSensorProbe": 1,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                            "Error02": 1,
+                            "Error32": 1,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+
+        humidity = gateway.get_sensor_device("sq610_1_humidity")
+        floor = gateway.get_sensor_device("sq610_1_floor_temperature")
+        battery = gateway.get_sensor_device("sq610_1_battery")
+        problem = gateway.get_binary_sensor_device("sq610_1_problem")
+        battery_problem = gateway.get_binary_sensor_device("sq610_1_battery_error")
+        self.assertIsNotNone(humidity)
+        self.assertEqual(45.5, humidity.state)
+        self.assertIsNotNone(floor)
+        self.assertEqual(21.34, floor.state)
+        self.assertIsNotNone(battery)
+        self.assertEqual(75, battery.state)
+        self.assertEqual("diagnostic", battery.entity_category)
+        self.assertIsNotNone(problem)
+        self.assertTrue(problem.is_on)
+        self.assertEqual(["Floor sensor overheating"], problem.extra_state_attributes["errors"])
+        self.assertIsNotNone(battery_problem)
+        self.assertTrue(battery_problem.is_on)
+        self.assertEqual(["Low battery"], battery_problem.extra_state_attributes["errors"])
+
     async def test_it600th_current_temperature_falls_back_to_temp_measurement(self):
         gateway = make_gateway_with_response(
             {
@@ -338,6 +476,55 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(16.0, device.min_temp)
         self.assertEqual(32.0, device.max_temp)
         self.assertTrue(device.locked)
+
+    async def test_trv3rf_climate_and_diagnostics(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("trv_1", "TRV3RF"),
+                        "sTherS": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 3500,
+                            "RunningState": 1,
+                        },
+                        "sComm": {
+                            "HoldType": 2,
+                            "DeviceErrorCode": "0000000000000001",
+                            "OpenWindowStatus": 1,
+                        },
+                        "sIT6ZB": {"TRVOutputPercentage": 45},
+                        "sPowerS": {"BatteryVoltage_x10": 27},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "trv_1"}}])
+
+        device = gateway.get_climate_device("trv_1")
+        self.assertIsNotNone(device)
+        self.assertEqual(HVAC_MODE_HEAT, device.hvac_mode)
+        self.assertEqual(CURRENT_HVAC_HEAT, device.hvac_action)
+        self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
+        self.assertEqual(["off", "heat", "auto"], device.hvac_modes)
+        self.assertEqual({"valve_opening": 45}, device.extra_state_attributes)
+        battery = gateway.get_sensor_device("trv_1_battery")
+        problem = gateway.get_binary_sensor_device("trv_1_problem")
+        open_window = gateway.get_binary_sensor_device("trv_1_open_window")
+        self.assertIsNotNone(battery)
+        self.assertEqual(100, battery.state)
+        self.assertIsNotNone(problem)
+        self.assertTrue(problem.is_on)
+        self.assertEqual(
+            {"error_code": "0000000000000001"},
+            problem.extra_state_attributes,
+        )
+        self.assertIsNotNone(open_window)
+        self.assertTrue(open_window.is_on)
 
     async def test_parser_errors_are_logged_and_skipped(self):
         gateway = make_gateway_with_response(

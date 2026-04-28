@@ -31,10 +31,14 @@ from .const import (
 )
 from ._device_parsers import (
     PARSING_EXCEPTIONS,
+    parse_binary_diagnostic_devices,
     parse_binary_sensor_device,
+    parse_climate_binary_sensor_devices,
     parse_climate_device,
+    parse_climate_sensor_devices,
     parse_cover_device,
-    parse_sensor_device,
+    parse_sensor_devices,
+    parse_switch_sensor_devices,
     parse_switch_device,
 )
 from .encryptor import IT600Encryptor
@@ -47,6 +51,7 @@ from .device_models import (
     MODEL_FC600,
     is_binary_sensor_summary,
     is_sq610_model,
+    is_trv_model,
 )
 from .models import (
     GatewayDevice,
@@ -280,6 +285,8 @@ class IT600Gateway:
         self._climate_update_callbacks: list[UpdateCallback] = []
 
         self._binary_sensor_devices: dict[str, BinarySensorDevice] = {}
+        self._climate_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
+        self._binary_sensor_diagnostic_devices: dict[str, BinarySensorDevice] = {}
         self._binary_sensor_update_callbacks: list[UpdateCallback] = []
 
         self._switch_devices: dict[str, SwitchDevice] = {}
@@ -289,6 +296,8 @@ class IT600Gateway:
         self._cover_update_callbacks: list[UpdateCallback] = []
 
         self._sensor_devices: dict[str, SensorDevice] = {}
+        self._climate_sensor_devices: dict[str, SensorDevice] = {}
+        self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
@@ -535,56 +544,183 @@ class IT600Gateway:
         devices: list[Any],
         send_callback: bool = False,
     ) -> None:
-        await self._refresh_device_collection(
-            devices,
-            "switch",
-            "_switch_devices",
-            parse_switch_device,
-            self._send_switch_update_callback,
-            send_callback,
-        )
+        local_devices: dict[str, SwitchDevice] = {}
+        sensor_devices: dict[str, SensorDevice] = {}
+
+        if devices:
+            request_items = _device_status_request_items(devices, "switch")
+            if request_items:
+                status = await self._make_encrypted_request(
+                    "read", {"requestAttr": "deviceid", "id": request_items}
+                )
+
+                for device_status in _response_items(status, "switch device detail"):
+                    unique_id = device_status.get("data", {}).get("UniID")
+                    try:
+                        device = parse_switch_device(device_status)
+                        sensors = parse_switch_sensor_devices(device_status)
+                    except PARSING_EXCEPTIONS:
+                        _LOGGER.exception("Failed to parse switch device %s", unique_id)
+                        continue
+
+                    if device is not None:
+                        local_devices[device.unique_id] = device
+                        if send_callback:
+                            self._switch_devices[device.unique_id] = device
+                            await self._send_switch_update_callback(device.unique_id)
+
+                    for sensor in sensors:
+                        sensor_devices[sensor.unique_id] = sensor
+                        if send_callback:
+                            self._switch_sensor_devices[sensor.unique_id] = sensor
+                            await self._send_sensor_update_callback(sensor.unique_id)
+
+        self._switch_devices = local_devices
+        self._switch_sensor_devices = sensor_devices
+        _LOGGER.debug("Refreshed %s switch devices", len(local_devices))
 
     async def _refresh_sensor_devices(
         self,
         devices: list[Any],
         send_callback: bool = False,
     ) -> None:
-        await self._refresh_device_collection(
-            devices,
-            "sensor",
-            "_sensor_devices",
-            parse_sensor_device,
-            self._send_sensor_update_callback,
-            send_callback,
-        )
+        local_devices: dict[str, SensorDevice] = {}
+
+        if devices:
+            request_items = _device_status_request_items(devices, "sensor")
+            if request_items:
+                status = await self._make_encrypted_request(
+                    "read", {"requestAttr": "deviceid", "id": request_items}
+                )
+
+                for device_status in _response_items(status, "sensor device detail"):
+                    unique_id = device_status.get("data", {}).get("UniID")
+                    try:
+                        sensors = parse_sensor_devices(device_status)
+                    except PARSING_EXCEPTIONS:
+                        _LOGGER.exception("Failed to parse sensor device %s", unique_id)
+                        continue
+
+                    for sensor in sensors:
+                        local_devices[sensor.unique_id] = sensor
+                        if send_callback:
+                            self._sensor_devices[sensor.unique_id] = sensor
+                            await self._send_sensor_update_callback(sensor.unique_id)
+
+        self._sensor_devices = local_devices
+        _LOGGER.debug("Refreshed %s sensor devices", len(local_devices))
 
     async def _refresh_binary_sensor_devices(
         self,
         devices: list[Any],
         send_callback: bool = False,
     ) -> None:
-        await self._refresh_device_collection(
-            devices,
-            "binary sensor",
-            "_binary_sensor_devices",
-            parse_binary_sensor_device,
-            self._send_binary_sensor_update_callback,
-            send_callback,
-        )
+        local_devices: dict[str, BinarySensorDevice] = {}
+        diagnostic_devices: dict[str, BinarySensorDevice] = {}
+
+        if devices:
+            request_items = _device_status_request_items(devices, "binary sensor")
+            if request_items:
+                status = await self._make_encrypted_request(
+                    "read", {"requestAttr": "deviceid", "id": request_items}
+                )
+
+                for device_status in _response_items(
+                    status,
+                    "binary sensor device detail",
+                ):
+                    unique_id = device_status.get("data", {}).get("UniID")
+                    try:
+                        device = parse_binary_sensor_device(device_status)
+                        diagnostics = parse_binary_diagnostic_devices(device_status)
+                    except PARSING_EXCEPTIONS:
+                        _LOGGER.exception(
+                            "Failed to parse binary sensor device %s",
+                            unique_id,
+                        )
+                        continue
+
+                    if device is not None:
+                        local_devices[device.unique_id] = device
+                        if send_callback:
+                            self._binary_sensor_devices[device.unique_id] = device
+                            await self._send_binary_sensor_update_callback(
+                                device.unique_id
+                            )
+
+                    for diagnostic in diagnostics:
+                        diagnostic_devices[diagnostic.unique_id] = diagnostic
+                        if send_callback:
+                            self._binary_sensor_diagnostic_devices[
+                                diagnostic.unique_id
+                            ] = diagnostic
+                            await self._send_binary_sensor_update_callback(
+                                diagnostic.unique_id
+                            )
+
+        self._binary_sensor_devices = local_devices
+        self._binary_sensor_diagnostic_devices = diagnostic_devices
+        _LOGGER.debug("Refreshed %s binary sensor devices", len(local_devices))
 
     async def _refresh_climate_devices(
         self,
         devices: list[Any],
         send_callback: bool = False,
     ) -> None:
-        await self._refresh_device_collection(
-            devices,
-            "climate",
-            "_climate_devices",
-            parse_climate_device,
-            self._send_climate_update_callback,
-            send_callback,
-        )
+        local_devices: dict[str, ClimateDevice] = {}
+        sensor_devices: dict[str, SensorDevice] = {}
+        binary_devices: dict[str, BinarySensorDevice] = {}
+
+        if devices:
+            request_items = _device_status_request_items(devices, "climate")
+            if request_items:
+                status = await self._make_encrypted_request(
+                    "read", {"requestAttr": "deviceid", "id": request_items}
+                )
+
+                for device_status in _response_items(status, "climate device detail"):
+                    unique_id = device_status.get("data", {}).get("UniID")
+                    try:
+                        device = parse_climate_device(device_status)
+                        if device is None:
+                            continue
+                        sensors = parse_climate_sensor_devices(device_status, device)
+                        binary_sensors = parse_climate_binary_sensor_devices(
+                            device_status,
+                            device,
+                        )
+                    except PARSING_EXCEPTIONS:
+                        _LOGGER.exception(
+                            "Failed to parse climate device %s",
+                            unique_id,
+                        )
+                        continue
+
+                    local_devices[device.unique_id] = device
+                    if send_callback:
+                        self._climate_devices[device.unique_id] = device
+                        await self._send_climate_update_callback(device.unique_id)
+
+                    for sensor in sensors:
+                        sensor_devices[sensor.unique_id] = sensor
+                        if send_callback:
+                            self._climate_sensor_devices[sensor.unique_id] = sensor
+                            await self._send_sensor_update_callback(sensor.unique_id)
+
+                    for binary_sensor in binary_sensors:
+                        binary_devices[binary_sensor.unique_id] = binary_sensor
+                        if send_callback:
+                            self._climate_binary_sensor_devices[
+                                binary_sensor.unique_id
+                            ] = binary_sensor
+                            await self._send_binary_sensor_update_callback(
+                                binary_sensor.unique_id
+                            )
+
+        self._climate_devices = local_devices
+        self._climate_sensor_devices = sensor_devices
+        self._climate_binary_sensor_devices = binary_devices
+        _LOGGER.debug("Refreshed %s climate devices", len(local_devices))
 
     async def _send_climate_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
@@ -654,13 +790,21 @@ class IT600Gateway:
     def get_binary_sensor_devices(self) -> dict[str, BinarySensorDevice]:
         """Return cached binary sensor devices keyed by unique device ID."""
 
-        return self._binary_sensor_devices
+        return {
+            **self._binary_sensor_devices,
+            **self._climate_binary_sensor_devices,
+            **self._binary_sensor_diagnostic_devices,
+        }
 
     def get_binary_sensor_device(self, device_id: str) -> BinarySensorDevice | None:
         """Return one cached binary sensor device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
-        return self._binary_sensor_devices.get(device_id)
+        return (
+            self._binary_sensor_devices.get(device_id)
+            or self._climate_binary_sensor_devices.get(device_id)
+            or self._binary_sensor_diagnostic_devices.get(device_id)
+        )
 
     def get_switch_devices(self) -> dict[str, SwitchDevice]:
         """Return cached switch devices keyed by unique device ID."""
@@ -687,13 +831,21 @@ class IT600Gateway:
     def get_sensor_devices(self) -> dict[str, SensorDevice]:
         """Return cached sensor devices keyed by unique device ID."""
 
-        return self._sensor_devices
+        return {
+            **self._sensor_devices,
+            **self._climate_sensor_devices,
+            **self._switch_sensor_devices,
+        }
 
     def get_sensor_device(self, device_id: str) -> SensorDevice | None:
         """Return one cached sensor device, or None if it is not loaded."""
 
         device_id = self._validate_device_id(device_id)
-        return self._sensor_devices.get(device_id)
+        return (
+            self._sensor_devices.get(device_id)
+            or self._climate_sensor_devices.get(device_id)
+            or self._switch_sensor_devices.get(device_id)
+        )
 
     async def fetch_sq610_properties(
         self,
@@ -875,6 +1027,16 @@ class IT600Gateway:
                     else HoldType.FOLLOW_SCHEDULE
                 }
             }
+        elif is_trv_model(device.model):
+            request_data = {
+                "sComm": {
+                    "SetHoldType": HoldType.STANDBY
+                    if preset == PRESET_OFF
+                    else HoldType.PERMANENT_HOLD
+                    if preset == PRESET_PERMANENT_HOLD
+                    else HoldType.FOLLOW_SCHEDULE
+                }
+            }
         else:
             request_data = {
                 "sIT600TH": {
@@ -914,6 +1076,16 @@ class IT600Gateway:
                     else SystemMode.COOL
                     if mode == HVAC_MODE_COOL
                     else SystemMode.AUTO
+                }
+            }
+        elif is_trv_model(device.model):
+            request_data = {
+                "sComm": {
+                    "SetHoldType": HoldType.STANDBY
+                    if mode == HVAC_MODE_OFF
+                    else HoldType.PERMANENT_HOLD
+                    if mode == HVAC_MODE_HEAT
+                    else HoldType.FOLLOW_SCHEDULE
                 }
             }
         else:
@@ -974,14 +1146,14 @@ class IT600Gateway:
         )
 
     async def set_climate_device_locked(self, device_id: str, locked: bool) -> None:
-        """Enable or disable the FC600 keypad lock."""
+        """Enable or disable a climate-device keypad lock."""
 
         if not isinstance(locked, bool):
             raise TypeError("locked must be a bool")
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         request_data: dict[str, dict[str, int]] = {
-            "sTherUIS": {"LockKey": 1 if locked else 0}
+            "sTherUIS": {"SetLockKey": 1 if locked else 0}
         }
 
         await self._make_encrypted_request(
@@ -1016,6 +1188,8 @@ class IT600Gateway:
                 request_data = {"sTherS": {"SetCoolingSetpoint_x100": rounded_setpoint}}
             else:
                 request_data = {"sTherS": {"SetHeatingSetpoint_x100": rounded_setpoint}}
+        elif is_trv_model(device.model):
+            request_data = {"sTherS": {"SetHeatingSetpoint_x100": rounded_setpoint}}
         else:
             request_data = {"sIT600TH": {"SetHeatingSetpoint_x100": rounded_setpoint}}
 
