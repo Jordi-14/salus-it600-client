@@ -259,8 +259,8 @@ def _parse_it600th_climate_device(
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
         current_humidity=current_humidity,
-        current_temperature=th["LocalTemperature_x100"] / TEMPERATURE_SCALE,
-        target_temperature=th["HeatingSetpoint_x100"] / TEMPERATURE_SCALE,
+        current_temperature=th.get("LocalTemperature_x100", 2000) / TEMPERATURE_SCALE,
+        target_temperature=th.get("HeatingSetpoint_x100", 2000) / TEMPERATURE_SCALE,
         max_temp=th.get("MaxHeatSetpoint_x100", 3500) / TEMPERATURE_SCALE,
         min_temp=th.get("MinHeatSetpoint_x100", 500) / TEMPERATURE_SCALE,
         hvac_mode=HVAC_MODE_OFF
@@ -303,10 +303,10 @@ def _parse_fan_coil_climate_device(
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
         current_humidity=None,
-        current_temperature=ther["LocalTemperature_x100"] / TEMPERATURE_SCALE,
-        target_temperature=(ther["HeatingSetpoint_x100"] / TEMPERATURE_SCALE)
+        current_temperature=ther.get("LocalTemperature_x100", 2000) / TEMPERATURE_SCALE,
+        target_temperature=(ther.get("HeatingSetpoint_x100", 2000) / TEMPERATURE_SCALE)
         if is_heating
-        else (ther["CoolingSetpoint_x100"] / TEMPERATURE_SCALE),
+        else (ther.get("CoolingSetpoint_x100", 2000) / TEMPERATURE_SCALE),
         max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / TEMPERATURE_SCALE)
         if is_heating
         else (ther.get("MaxCoolSetpoint_x100", 4000) / TEMPERATURE_SCALE),
