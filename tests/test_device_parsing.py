@@ -306,13 +306,15 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        with self.assertLogs("salus_it600", level="ERROR") as logs:
-            await gateway._refresh_climate_devices(
-                [{"data": {"UniID": "broken_1"}}],
-            )
+        await gateway._refresh_climate_devices(
+            [{"data": {"UniID": "broken_1"}}],
+        )
 
-        self.assertIn("Failed to parse climate device broken_1", "\n".join(logs.output))
-        self.assertEqual({}, gateway.get_climate_devices())
+        # Device should load successfully with fallback temperature values
+        device = gateway.get_climate_device("broken_1")
+        self.assertIsNotNone(device)
+        self.assertEqual(20.0, device.current_temperature)  # Fallback value
+        self.assertEqual(21.0, device.target_temperature)
 
     async def test_refresh_invokes_registered_callbacks(self):
         gateway = make_gateway_with_response(
