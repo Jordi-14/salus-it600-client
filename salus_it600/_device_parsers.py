@@ -64,6 +64,46 @@ PARSING_EXCEPTIONS = (KeyError, TypeError, ValueError)
 _MISSING_HOLD_TYPE_WARNED: set[str] = set()
 
 
+def _numeric_value(value: Any) -> float | None:
+    """Return a numeric payload value, rejecting bools and non-numeric values."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _temperature_from_x100(*values: Any) -> float | None:
+    """Return the first available x100 temperature value in Celsius."""
+    for value in values:
+        numeric_value = _numeric_value(value)
+        if numeric_value is not None:
+            return numeric_value / TEMPERATURE_SCALE
+    return None
+
+
+def _temperature_from_x100_or_default(value: Any, default: float) -> float:
+    """Return a scaled x100 temperature value, or the supplied fallback."""
+    temperature = _temperature_from_x100(value)
+    return temperature if temperature is not None else default
+
+
+def _humidity_percent(raw_humidity: Any) -> float | None:
+    """Return SQ610 humidity as a percent, accepting raw percent and x100 forms."""
+    humidity = _numeric_value(raw_humidity)
+    if humidity is None:
+        return None
+
+    if humidity > 100:
+        humidity /= TEMPERATURE_SCALE
+
+    if 0 <= humidity <= 100:
+        return humidity
+
+    _LOGGER.warning("Ignoring implausible SQ610 humidity value: %s", raw_humidity)
+    return None
+
+
 def _device_name(device_status: dict[str, Any], unique_id: str | None) -> str:
     """Return a device name from a raw Salus gateway payload."""
     default_name = unique_id or "Unknown"
@@ -248,21 +288,30 @@ def _parse_it600th_climate_device(
 ) -> ClimateDevice:
     """Parse one iT600 or SQ610 thermostat from gateway payload."""
     model = model_identifier(device_status)
-    raw_humidity = th.get("SunnySetpoint_x100")
+    s_temp = device_status.get("sTempS", {})
     current_humidity = (
-        raw_humidity / TEMPERATURE_SCALE
-        if is_sq610_model(model) and isinstance(raw_humidity, int | float)
+        _humidity_percent(th.get("SunnySetpoint_x100"))
+        if is_sq610_model(model)
         else None
+    )
+    current_temperature = _temperature_from_x100(
+        th.get("LocalTemperature_x100"),
+        s_temp.get("MeasuredValue_x100") if isinstance(s_temp, dict) else None,
     )
     hold_type = _hold_type(th, unique_id)
     running_state = th.get("RunningState", DEFAULT_RUNNING_STATE)
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
         current_humidity=current_humidity,
-        current_temperature=th.get("LocalTemperature_x100", 2000) / TEMPERATURE_SCALE,
-        target_temperature=th.get("HeatingSetpoint_x100", 2000) / TEMPERATURE_SCALE,
-        max_temp=th.get("MaxHeatSetpoint_x100", 3500) / TEMPERATURE_SCALE,
-        min_temp=th.get("MinHeatSetpoint_x100", 500) / TEMPERATURE_SCALE,
+        current_temperature=current_temperature,
+        target_temperature=_temperature_from_x100_or_default(
+            th.get("HeatingSetpoint_x100"),
+            20.0,
+        ),
+        max_temp=_temperature_from_x100_or_default(
+            th.get("MaxHeatSetpoint_x100"), 35.0
+        ),
+        min_temp=_temperature_from_x100_or_default(th.get("MinHeatSetpoint_x100"), 5.0),
         hvac_mode=HVAC_MODE_OFF
         if hold_type == HoldType.STANDBY
         else HVAC_MODE_HEAT
@@ -303,16 +352,26 @@ def _parse_fan_coil_climate_device(
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
         current_humidity=None,
-        current_temperature=ther.get("LocalTemperature_x100", 2000) / TEMPERATURE_SCALE,
-        target_temperature=(ther.get("HeatingSetpoint_x100", 2000) / TEMPERATURE_SCALE)
+        current_temperature=_temperature_from_x100(ther.get("LocalTemperature_x100")),
+        target_temperature=_temperature_from_x100_or_default(
+            ther.get("HeatingSetpoint_x100"),
+            20.0,
+        )
         if is_heating
-        else (ther.get("CoolingSetpoint_x100", 2000) / TEMPERATURE_SCALE),
-        max_temp=(ther.get("MaxHeatSetpoint_x100", 4000) / TEMPERATURE_SCALE)
+        else _temperature_from_x100_or_default(
+            ther.get("CoolingSetpoint_x100"),
+            20.0,
+        ),
+        max_temp=_temperature_from_x100_or_default(
+            ther.get("MaxHeatSetpoint_x100"), 40.0
+        )
         if is_heating
-        else (ther.get("MaxCoolSetpoint_x100", 4000) / TEMPERATURE_SCALE),
-        min_temp=(ther.get("MinHeatSetpoint_x100", 500) / TEMPERATURE_SCALE)
+        else _temperature_from_x100_or_default(ther.get("MaxCoolSetpoint_x100"), 40.0),
+        min_temp=_temperature_from_x100_or_default(
+            ther.get("MinHeatSetpoint_x100"), 5.0
+        )
         if is_heating
-        else (ther.get("MinCoolSetpoint_x100", 500) / TEMPERATURE_SCALE),
+        else _temperature_from_x100_or_default(ther.get("MinCoolSetpoint_x100"), 5.0),
         hvac_mode=HVAC_MODE_HEAT
         if ther["SystemMode"] == SystemMode.HEAT
         else HVAC_MODE_COOL

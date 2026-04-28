@@ -8,10 +8,31 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 class IT600Encryptor:
-    iv = bytes([0x88, 0xa6, 0xb0, 0x79, 0x5d, 0x85, 0xdb, 0xfc, 0xe6, 0xe0, 0xb3, 0xe9, 0xa6, 0x29, 0x65, 0x4b])
+    iv = bytes(
+        [
+            0x88,
+            0xA6,
+            0xB0,
+            0x79,
+            0x5D,
+            0x85,
+            0xDB,
+            0xFC,
+            0xE6,
+            0xE0,
+            0xB3,
+            0xE9,
+            0xA6,
+            0x29,
+            0x65,
+            0x4B,
+        ]
+    )
 
     def __init__(self, euid: str):
-        key: bytes = hashlib.md5(f"Salus-{euid.lower()}".encode("utf-8")).digest() + bytes([0] * 16)
+        key: bytes = hashlib.md5(
+            f"Salus-{euid.lower()}".encode("utf-8")
+        ).digest() + bytes([0] * 16)
         self.cipher = Cipher(algorithms.AES(key), modes.CBC(self.iv), default_backend())
 
     def encrypt(self, plain: str) -> bytes:

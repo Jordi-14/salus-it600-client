@@ -37,8 +37,9 @@ SQ610 devices expose heating and cooling setpoints and modes not present in
 standard models. Key differences:
 
 - **Humidity stored in unusual field**: SQ610 devices report relative humidity
-  in the `SunnySetpoint_x100` field (normally a temperature setpoint). Divide
-  by 100 to get actual humidity %.
+  in the `SunnySetpoint_x100` field (normally a temperature setpoint). Some
+  payloads already use percent units while others use x100; normalize both to
+  a Home Assistant-style percent value.
 
 - **Dual setpoints**: SQ610 exposes both `HeatingSetpoint_x100` and
   `CoolingSetpoint_x100` depending on system mode, plus separate
@@ -113,13 +114,13 @@ SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 
 def model_identifier(device_status: dict[str, Any]) -> str | None:
     """Return the device model identifier from a detailed gateway payload.
-    
+
     Extracts model from the `DeviceL.ModelIdentifier_i` field in a device detail
     response (returned by the "deviceid" read request).
-    
+
     Args:
         device_status: Device detail dict from gateway readall/deviceid response
-    
+
     Returns:
         Model identifier string (e.g. "SQ610RF", "FC600") or None if missing/invalid
     """
@@ -129,13 +130,13 @@ def model_identifier(device_status: dict[str, Any]) -> str | None:
 
 def basic_model_identifier(device_status: dict[str, Any]) -> str | None:
     """Return the model identifier from a readall summary payload.
-    
+
     Extracts model from the `sBasicS.ModelIdentifier` field in a readall response
     (not available in detailed deviceid responses).
-    
+
     Args:
         device_status: Device summary dict from gateway readall response
-    
+
     Returns:
         Model identifier string or None if missing/invalid
     """
@@ -148,22 +149,22 @@ def basic_model_identifier(device_status: dict[str, Any]) -> str | None:
 
 def is_sq610_model(model: str | None) -> bool:
     """Return whether a model identifier is an SQ610 Quantum thermostat.
-    
+
     SQ610 models are identified by the presence of "SQ610" in the model string
     (case-insensitive). Variants include SQ610, SQ610RF, etc.
-    
+
     SQ610 thermostats have special protocol features:
     - Separate heating and cooling setpoints
     - Humidity reported in SunnySetpoint_x100 field
     - Extended hold type support (auto, permanent, standby)
     - SystemMode field for mode selection (3=cool, 4=heat, 5=emergency)
-    
+
     Args:
         model: Model identifier string or None
-    
+
     Returns:
         True if SQ610 variant, False otherwise
-    
+
     See Also:
         Module docstring for SQ610 protocol quirks
     """
@@ -172,14 +173,14 @@ def is_sq610_model(model: str | None) -> bool:
 
 def is_fan_coil_model(model: str | None) -> bool:
     """Return whether a model identifier is an FC600 fan-coil thermostat.
-    
+
     FC600 models have different protocol structure than standard iT600TH
     thermostats: they use `sTherS` (with separate cooling setpoint) +
     `sComm` (hold type) + `sFanS` (fan mode) instead of single `sIT600TH`.
-    
+
     Args:
         model: Model identifier string or None
-    
+
     Returns:
         True if FC600, False otherwise
     """
@@ -188,36 +189,39 @@ def is_fan_coil_model(model: str | None) -> bool:
 
 def is_binary_sensor_summary(device_status: dict[str, Any]) -> bool:
     """Return whether a readall entry describes a binary sensor.
-    
+
     Binary sensors are identified by either:
     - Presence of `sIASZS` section (contact/alarm/motion sensors)
     - Model in BINARY_RELAY_MODELS (TRV or receiver relay)
-    
+
     Typically detects: door/window contacts, moisture sensors, smoke detectors,
     mini TRVs with relay, wireless receivers.
-    
+
     Args:
         device_status: Device summary dict from gateway readall response
-    
+
     Returns:
         True if binary sensor protocol signature detected
     """
-    return "sIASZS" in device_status or basic_model_identifier(device_status) in BINARY_RELAY_MODELS
+    return (
+        "sIASZS" in device_status
+        or basic_model_identifier(device_status) in BINARY_RELAY_MODELS
+    )
 
 
 def binary_sensor_device_class(model: str | None) -> str | None:
     """Return the Home Assistant-style binary sensor device class.
-    
+
     Maps Salus model identifiers to standard Home Assistant binary sensor
     device classes for consistent icon and state display.
-    
+
     Args:
         model: Salus model identifier (e.g. "SW600", "WLS600")
-    
+
     Returns:
         Home Assistant device class string ("window", "moisture", "smoke", etc.)
         or None if model not in BINARY_SENSOR_DEVICE_CLASSES map
-    
+
     Example:
         >>> binary_sensor_device_class("SW600")
         "window"
@@ -231,17 +235,17 @@ def binary_sensor_device_class(model: str | None) -> str | None:
 
 def switch_device_class(model: str | None) -> str:
     """Return the Home Assistant-style switch device class.
-    
+
     Maps Salus model identifiers to Home Assistant switch device classes.
     Most switches are generic "switch", but power outlets (SP600, SPE600)
     are marked as "outlet" for icon distinction.
-    
+
     Args:
         model: Salus model identifier (e.g. "SP600", "SPE600", "RS600")
-    
+
     Returns:
         "outlet" for power outlet models, "switch" for others
-    
+
     Example:
         >>> switch_device_class("SP600")
         "outlet"

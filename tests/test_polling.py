@@ -5,7 +5,9 @@ import unittest
 from salus_it600.gateway import IT600Gateway
 
 
-def make_gateway_with_responses(*responses: dict) -> tuple[IT600Gateway, list[tuple[str, dict]]]:
+def make_gateway_with_responses(
+    *responses: dict,
+) -> tuple[IT600Gateway, list[tuple[str, dict]]]:
     """Create a gateway whose request method returns queued responses."""
     gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128", session=object())
     pending_responses = list(responses)

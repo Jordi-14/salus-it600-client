@@ -223,7 +223,9 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(IT600CommandError) as context:
             await gateway.connect()
 
-        self.assertIn("response did not contain gateway information", str(context.exception))
+        self.assertIn(
+            "response did not contain gateway information", str(context.exception)
+        )
 
     async def test_set_climate_device_fan_mode_maps_medium_mode(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
@@ -311,9 +313,9 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             }
         )
         gateway = make_gateway(session)
-        gateway._climate_devices["sq610-1"] = make_climate_device(
-            "sq610-1"
-        )._replace(model="SQ610RF")
+        gateway._climate_devices["sq610-1"] = make_climate_device("sq610-1")._replace(
+            model="SQ610RF"
+        )
 
         raw_props = await gateway.fetch_sq610_properties(["sq610-1"])
 
@@ -332,9 +334,9 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
     async def test_write_sq610_property_writes_sit600th_payload(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
-        gateway._climate_devices["sq610-1"] = make_climate_device(
-            "sq610-1"
-        )._replace(model="SQ610RF")
+        gateway._climate_devices["sq610-1"] = make_climate_device("sq610-1")._replace(
+            model="SQ610RF"
+        )
 
         await gateway.write_sq610_property("sq610-1", "SetSystemMode", 3)
 
