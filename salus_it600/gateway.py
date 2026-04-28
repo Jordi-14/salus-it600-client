@@ -48,7 +48,14 @@ from .device_models import (
     is_binary_sensor_summary,
     is_sq610_model,
 )
-from .models import GatewayDevice, ClimateDevice, BinarySensorDevice, SwitchDevice, CoverDevice, SensorDevice
+from .models import (
+    GatewayDevice,
+    ClimateDevice,
+    BinarySensorDevice,
+    SwitchDevice,
+    CoverDevice,
+    SensorDevice,
+)
 
 _LOGGER = logging.getLogger("salus_it600")
 
@@ -128,9 +135,7 @@ def _validate_setpoint(
 
     setpoint = float(value)
     if setpoint < min_temp or setpoint > max_temp:
-        raise ValueError(
-            f"setpoint_celsius must be between {min_temp} and {max_temp}"
-        )
+        raise ValueError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
     return setpoint
 
 
@@ -231,13 +236,13 @@ class IT600Gateway:
     """Async client for one Salus UG600 local gateway."""
 
     def __init__(
-            self,
-            euid: str,
-            host: str,
-            port: int = 80,
-            request_timeout: int | float = 5,
-            session: aiohttp.ClientSession | None = None,
-            debug: bool = False,
+        self,
+        euid: str,
+        host: str,
+        port: int = 80,
+        request_timeout: int | float = 5,
+        session: aiohttp.ClientSession | None = None,
+        debug: bool = False,
     ) -> None:
         """Create a gateway client.
 
@@ -304,10 +309,7 @@ class IT600Gateway:
 
         try:
             all_devices = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "readall"
-                }
+                "read", {"requestAttr": "readall"}
             )
 
             gateway = next(
@@ -355,17 +357,12 @@ class IT600Gateway:
         """
 
         all_devices = await self._make_encrypted_request(
-            "read",
-            {
-                "requestAttr": "readall"
-            }
+            "read", {"requestAttr": "readall"}
         )
 
         device_items = _response_items(all_devices, "readall")
 
-        gateway_devices = list(
-            filter(lambda x: "sGateway" in x, device_items)
-        )
+        gateway_devices = list(filter(lambda x: "sGateway" in x, device_items))
         await self._refresh_gateway_device(gateway_devices, send_callback)
 
         climate_devices = list(
@@ -376,19 +373,13 @@ class IT600Gateway:
         binary_sensors = list(filter(is_binary_sensor_summary, device_items))
         await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
 
-        sensors = list(
-            filter(lambda x: "sTempS" in x, device_items)
-        )
+        sensors = list(filter(lambda x: "sTempS" in x, device_items))
         await self._refresh_sensor_devices(sensors, send_callback)
 
-        switches = list(
-            filter(lambda x: "sOnOffS" in x, device_items)
-        )
+        switches = list(filter(lambda x: "sOnOffS" in x, device_items))
         await self._refresh_switch_devices(switches, send_callback)
 
-        covers = list(
-            filter(lambda x: "sLevelS" in x, device_items)
-        )
+        covers = list(filter(lambda x: "sLevelS" in x, device_items))
         await self._refresh_cover_devices(covers, send_callback)
 
     async def _refresh_device_collection(
@@ -401,7 +392,7 @@ class IT600Gateway:
         send_callback: bool = False,
     ) -> None:
         """Refresh one device collection using a parser for that device type.
-        
+
         This is the consolidated pipeline for all device type refreshes. It:
         1. Checks if there are devices of this type to poll
         2. Makes encrypted gateway request for device details
@@ -411,11 +402,11 @@ class IT600Gateway:
         6. Catches parsing errors, logs them, and continues
         7. Stores device state in internal dict (gateway._<type>_devices)
         8. Optionally triggers update callbacks
-        
+
         This consolidation eliminates ~60% code duplication across the original
         separate _refresh_*_devices methods while keeping device-type-specific
         logic isolated in parser functions.
-        
+
         Args:
             devices: List of device summary dicts from readall response
             device_type: Human-readable name for logging (e.g. "switch", "cover")
@@ -428,11 +419,11 @@ class IT600Gateway:
             send_callback: If True, invoke callback for each parsed device.
                           Usually False during poll_status (callback sent once
                           after all types polled), True during discovery.
-        
+
         Raises:
             IT600ConnectionError: If gateway request fails (propagates up)
             IT600CommandError: If response validation fails
-        
+
         Example:
             To add a new device type (e.g. "dimmer"):
             1. Add parser function `_parse_dimmer_device()`
@@ -445,11 +436,7 @@ class IT600Gateway:
             request_items = _device_status_request_items(devices, device_type)
             if request_items:
                 status = await self._make_encrypted_request(
-                    "read",
-                    {
-                        "requestAttr": "deviceid",
-                        "id": request_items
-                    }
+                    "read", {"requestAttr": "deviceid", "id": request_items}
                 )
 
                 for device_status in _response_items(
@@ -497,11 +484,7 @@ class IT600Gateway:
                 return
 
             status = await self._make_encrypted_request(
-                "read",
-                {
-                    "requestAttr": "deviceid",
-                    "id": request_items
-                }
+                "read", {"requestAttr": "deviceid", "id": request_items}
             )
 
             for device_status in _response_items(status, "gateway device detail"):
@@ -510,16 +493,22 @@ class IT600Gateway:
                 if unique_id is None:
                     continue
 
-                model: str | None = device_status.get("sGateway", {}).get("ModelIdentifier", None)
+                model: str | None = device_status.get("sGateway", {}).get(
+                    "ModelIdentifier", None
+                )
 
                 try:
                     local_device = GatewayDevice(
                         name=model or unique_id,
                         unique_id=unique_id,
                         data=device_status["data"],
-                        manufacturer=device_status.get("sBasicS", {}).get("ManufactureName", "SALUS"),
+                        manufacturer=device_status.get("sBasicS", {}).get(
+                            "ManufactureName", "SALUS"
+                        ),
                         model=model,
-                        sw_version=device_status.get("sOTA", {}).get("OTAFirmwareVersion_d", None)
+                        sw_version=device_status.get("sOTA", {}).get(
+                            "OTAFirmwareVersion_d", None
+                        ),
                     )
                 except PARSING_EXCEPTIONS:
                     _LOGGER.exception("Failed to poll gateway %s", unique_id)
@@ -813,9 +802,7 @@ class IT600Gateway:
                 "id": [
                     {
                         "data": device.data,
-                        "sLevelS": {
-                            "SetMoveToLevel": f"{format(position, '02x')}FFFF"
-                        },
+                        "sLevelS": {"SetMoveToLevel": f"{format(position, '02x')}FFFF"},
                     }
                 ],
             },
@@ -843,9 +830,7 @@ class IT600Gateway:
                 "id": [
                     {
                         "data": device.data,
-                        "sOnOffS": {
-                            "SetOnOff": 1
-                        },
+                        "sOnOffS": {"SetOnOff": 1},
                     }
                 ],
             },
@@ -863,9 +848,7 @@ class IT600Gateway:
                 "id": [
                     {
                         "data": device.data,
-                        "sOnOffS": {
-                            "SetOnOff": 0
-                        },
+                        "sOnOffS": {"SetOnOff": 0},
                     }
                 ],
             },
@@ -1014,7 +997,9 @@ class IT600Gateway:
             },
         )
 
-    async def set_climate_device_temperature(self, device_id: str, setpoint_celsius: float) -> None:
+    async def set_climate_device_temperature(
+        self, device_id: str, setpoint_celsius: float
+    ) -> None:
         """Set a climate target temperature in Celsius."""
 
         device = self._require_device(device_id, self._climate_devices, "climate")
@@ -1023,9 +1008,7 @@ class IT600Gateway:
             device.min_temp,
             device.max_temp,
         )
-        rounded_setpoint = int(
-            self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE
-        )
+        rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
         request_data: dict[str, dict[str, int]]
 
         if device.model == MODEL_FC600:
@@ -1097,7 +1080,9 @@ class IT600Gateway:
                 request_body_json = json.dumps(request_body)
 
                 if self._debug:
-                    _LOGGER.debug("Gateway request: POST %s\n%s\n", request_url, request_body_json)
+                    _LOGGER.debug(
+                        "Gateway request: POST %s\n%s\n", request_url, request_body_json
+                    )
 
                 async with asyncio.timeout(self._request_timeout):
                     resp = await self._session.post(
@@ -1149,7 +1134,9 @@ class IT600Gateway:
             except IT600CommandError:
                 raise
             except Exception:
-                _LOGGER.exception("Unexpected error while communicating with iT600 gateway")
+                _LOGGER.exception(
+                    "Unexpected error while communicating with iT600 gateway"
+                )
                 raise
 
     async def close(self) -> None:

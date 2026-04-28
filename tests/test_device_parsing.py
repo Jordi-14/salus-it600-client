@@ -228,7 +228,32 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(PRESET_OFF, device.preset_mode)
         self.assertIsNone(device.current_humidity)
 
-    async def test_sq610_humidity_is_scaled_from_x100_field(self):
+    async def test_sq610_humidity_accepts_raw_percent_field(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_1", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "SunnySetpoint_x100": 63,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+
+        device = gateway.get_climate_device("sq610_1")
+        self.assertIsNotNone(device)
+        self.assertEqual(63.0, device.current_humidity)
+
+    async def test_sq610_humidity_accepts_x100_field(self):
         gateway = make_gateway_with_response(
             {
                 "status": "success",
@@ -252,6 +277,30 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         device = gateway.get_climate_device("sq610_1")
         self.assertIsNotNone(device)
         self.assertEqual(45.5, device.current_humidity)
+
+    async def test_it600th_current_temperature_falls_back_to_temp_measurement(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_1", "SQ610RF"),
+                        "sIT600TH": {
+                            "HeatingSetpoint_x100": 2100,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                        },
+                        "sTempS": {"MeasuredValue_x100": 2235},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+
+        device = gateway.get_climate_device("sq610_1")
+        self.assertIsNotNone(device)
+        self.assertEqual(22.35, device.current_temperature)
 
     async def test_fc600_cooling_payload_maps_extended_state(self):
         gateway = make_gateway_with_response(
@@ -310,10 +359,10 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
             [{"data": {"UniID": "broken_1"}}],
         )
 
-        # Device should load successfully with fallback temperature values
+        # Device should load successfully without inventing a fake current temperature.
         device = gateway.get_climate_device("broken_1")
         self.assertIsNotNone(device)
-        self.assertEqual(20.0, device.current_temperature)  # Fallback value
+        self.assertIsNone(device.current_temperature)
         self.assertEqual(21.0, device.target_temperature)
 
     async def test_refresh_invokes_registered_callbacks(self):
