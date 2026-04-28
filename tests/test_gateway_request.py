@@ -272,6 +272,33 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetHoldType": 10}, request["id"][0]["sComm"])
 
+    async def test_set_trv3rf_preset_writes_scomm_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["trv-1"] = make_climate_device("trv-1")._replace(
+            model="TRV3RF",
+            hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+            preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
+        )
+
+        await gateway.set_climate_device_preset("trv-1", PRESET_PERMANENT_HOLD)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 2}, request["id"][0]["sComm"])
+
+    async def test_set_trv3rf_mode_writes_scomm_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["trv-1"] = make_climate_device("trv-1")._replace(
+            model="TRV3RF",
+            hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+        )
+
+        await gateway.set_climate_device_mode("trv-1", HVAC_MODE_HEAT)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 2}, request["id"][0]["sComm"])
+
     async def test_set_fc600_temperature_in_cool_mode_writes_cooling_setpoint(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
@@ -295,7 +322,25 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         await gateway.set_climate_device_locked("climate-1", True)
 
         request = json.loads(session.post_calls[0][1]["data"])
-        self.assertEqual({"LockKey": 1}, request["id"][0]["sTherUIS"])
+        self.assertEqual({"SetLockKey": 1}, request["id"][0]["sTherUIS"])
+
+    async def test_set_trv3rf_temperature_writes_sthers_payload(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["trv-1"] = make_climate_device("trv-1")._replace(
+            model="TRV3RF",
+            hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+            min_temp=5.0,
+            max_temp=35.0,
+        )
+
+        await gateway.set_climate_device_temperature("trv-1", 21.2)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetHeatingSetpoint_x100": 2100},
+            request["id"][0]["sTherS"],
+        )
 
     async def test_fetch_sq610_properties_returns_flattened_raw_payload(self):
         session = FakeSession(

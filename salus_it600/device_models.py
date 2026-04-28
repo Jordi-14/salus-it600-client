@@ -79,6 +79,11 @@ MODEL_SMOKE_SENSOR = "SmokeSensor-EM"
 MODEL_MINI_TRV = "it600MINITRV"
 MODEL_RECEIVER = "it600Receiver"
 MODEL_BUTTON = "SB600"
+MODEL_SD600 = "SD600"
+MODEL_TS600 = "TS600"
+MODEL_RE600 = "RE600"
+MODEL_RE10B = "RE10B"
+MODEL_TRV3RF = "TRV3RF"
 
 SQ610_MODEL_TOKEN = "SQ610"
 
@@ -88,11 +93,30 @@ BINARY_SENSOR_DEVICE_CLASSES = {
     MODEL_OS600: "window",
     MODEL_WLS600: "moisture",
     MODEL_SMOKE_SENSOR: "smoke",
-    MODEL_MINI_TRV: "valve",
-    MODEL_RECEIVER: "receiver",
+    MODEL_MINI_TRV: "heat",
+    MODEL_RECEIVER: "running",
 }
 OUTLET_MODELS = {MODEL_SP600, MODEL_SPE600}
 SKIPPED_BINARY_SENSOR_MODELS = {MODEL_BUTTON}
+BATTERY_OEM_MODELS = frozenset(
+    {
+        "SQ610RF",
+        "SQ610RF(WB)",
+        "SQ610RFNH",
+        "SQ610RFNH(WB)",
+    }
+)
+WINDOW_VOLTAGE_MODELS = frozenset({MODEL_SW600, MODEL_OS600})
+DOOR_VOLTAGE_MODELS = frozenset(
+    {
+        MODEL_SMOKE_SENSOR,
+        MODEL_WLS600,
+        MODEL_TS600,
+        MODEL_SD600,
+    }
+)
+ENERGY_METER_VOLTAGE_MODELS = frozenset({MODEL_RE600, MODEL_RE10B})
+TRV_VOLTAGE_MODELS = frozenset({MODEL_TRV3RF})
 
 SQ610_MODE_AUTO = SystemMode.AUTO
 SQ610_MODE_COOL = SystemMode.COOL
@@ -185,6 +209,11 @@ def is_fan_coil_model(model: str | None) -> bool:
         True if FC600, False otherwise
     """
     return model == MODEL_FC600
+
+
+def is_trv_model(model: str | None) -> bool:
+    """Return whether a model identifier is a TRV climate device."""
+    return model in TRV_VOLTAGE_MODELS
 
 
 def is_binary_sensor_summary(device_status: dict[str, Any]) -> bool:

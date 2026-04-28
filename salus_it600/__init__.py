@@ -7,6 +7,7 @@ from .exceptions import (
     IT600AuthenticationError,
     IT600CommandError,
     IT600ConnectionError,
+    IT600UnsupportedFirmwareError,
 )
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "IT600AuthenticationError",
     "IT600CommandError",
     "IT600ConnectionError",
+    "IT600UnsupportedFirmwareError",
     "IT600Gateway",
 ]
 
