@@ -1,0 +1,82 @@
+name: Salus client support
+description: Report a salus-it600-client protocol, parsing, or command problem.
+title: "[Support]: "
+labels: ["support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for the Python client package. Home Assistant UI/entity issues usually belong in the homeassistant_salus repository.
+
+  - type: input
+    id: client_version
+    attributes:
+      label: salus-it600-client version
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      placeholder: "3.12.3"
+    validations:
+      required: true
+
+  - type: input
+    id: gateway_model
+    attributes:
+      label: Gateway model and firmware
+      description: Include UGE600/UG800 and firmware version if known.
+      placeholder: "UGE600, firmware unknown"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: gateway_protocol
+    attributes:
+      label: Gateway protocol
+      options:
+        - Unknown
+        - AES-CBC / legacy
+        - AES-CCM / newer firmware
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the failing connection, parser, or command behavior.
+      placeholder: "poll_status() fails after connect() succeeds."
+    validations:
+      required: true
+
+  - type: textarea
+    id: devices
+    attributes:
+      label: Affected devices
+      description: List model identifiers and device types if relevant.
+      placeholder: "SQ610RF thermostat, TRV3RF valve, SPE600 plug"
+    validations:
+      required: false
+
+  - type: textarea
+    id: payload
+    attributes:
+      label: Redacted payload or debug output
+      description: Paste only redacted local payload/debug snippets. Do not post EUIDs or sensitive network details.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction code or steps
+      render: python
+      placeholder: |
+        from salus_it600.gateway import IT600Gateway
+    validations:
+      required: true

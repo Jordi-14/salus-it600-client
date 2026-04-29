@@ -48,7 +48,7 @@ from .exceptions import (
     IT600ConnectionError,
     IT600UnsupportedFirmwareError,
 )
-from .protocol import GatewayProtocol
+from .protocol import GatewayProtocol, parse_frame_33
 from .protocol_aes_cbc import AesCbcProtocol
 from .protocol_aes_ccm import AesCcmProtocol
 from .device_models import (
@@ -194,6 +194,27 @@ def _validate_gateway_response(response: Any, context: str) -> dict[str, Any]:
         )
 
     return response
+
+
+def _validate_http_status(status: int, context: str) -> None:
+    """Raise a typed exception for non-successful gateway HTTP responses."""
+    if status == 200:
+        return
+
+    raise IT600ConnectionError(
+        f"Gateway {context} request failed with HTTP status {status}"
+    )
+
+
+def _raise_for_gateway_frame(raw: bytes, context: str) -> None:
+    """Raise a typed exception for known fixed-length gateway protocol frames."""
+    frame = parse_frame_33(raw)
+    if frame is None:
+        return
+
+    raise IT600UnsupportedFirmwareError(
+        f"Gateway returned a {frame.trailer_name} frame during {context} request"
+    )
 
 
 def _response_items(response: Any, context: str) -> list[dict[str, Any]]:
@@ -1361,12 +1382,26 @@ class IT600Gateway:
                         headers={"content-type": "application/json"},
                     )
                     response_bytes = await resp.read()
-                    if self._protocol is not None:
-                        response_json_string = self._protocol.unwrap_response(
-                            response_bytes
-                        )
-                    else:
-                        response_json_string = self._encryptor.decrypt(response_bytes)
+                    _validate_http_status(
+                        getattr(resp, "status", 200),
+                        command,
+                    )
+                    _raise_for_gateway_frame(response_bytes, command)
+
+                    try:
+                        if self._protocol is not None:
+                            response_json_string = self._protocol.unwrap_response(
+                                response_bytes
+                            )
+                        else:
+                            response_json_string = self._encryptor.decrypt(
+                                response_bytes
+                            )
+                    except Exception as e:
+                        raise IT600CommandError(
+                            f"Failed to decrypt gateway response for '{command}' "
+                            f"request"
+                        ) from e
 
                     if self._debug:
                         _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
@@ -1406,7 +1441,11 @@ class IT600Gateway:
                 raise IT600CommandError(
                     "Invalid JSON response received from iT600 gateway"
                 ) from e
-            except IT600CommandError:
+            except (
+                IT600CommandError,
+                IT600ConnectionError,
+                IT600UnsupportedFirmwareError,
+            ):
                 raise
             except Exception:
                 _LOGGER.exception(
