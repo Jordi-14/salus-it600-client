@@ -46,10 +46,15 @@ jobs:
           PY
 
       - name: Install build tools
-        run: python -m pip install --upgrade build twine ruff
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
 
-      - name: Run critical Ruff checks
-        run: python -m ruff check salus_it600 tests main.py --select E9,F63,F7,F82
+      - name: Run Ruff
+        run: python -m ruff check salus_it600 tests main.py
+
+      - name: Run mypy
+        run: python -m mypy
 
       - name: Compile Python files
         run: python -m compileall -q salus_it600 tests main.py

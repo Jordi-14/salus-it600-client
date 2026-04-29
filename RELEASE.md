@@ -63,10 +63,12 @@ After merging the release commit to `master`, tag that exact commit:
 git switch master
 git pull --ff-only origin master
 python3 -m unittest
+python3 -m ruff check salus_it600 tests main.py
+python3 -m mypy
 python3 -m build
 python3 -m twine check dist/*
-git tag v0.3.0
-git push origin v0.3.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 The `Publish to PyPI` workflow then:
@@ -84,8 +86,8 @@ If the workflow fails before uploading, fix the branch and move the tag to the
 fixed commit only if nothing was published:
 
 ```bash
-git tag -f v0.3.0
-git push --force origin v0.3.0
+git tag -f vX.Y.Z
+git push --force origin vX.Y.Z
 ```
 
 If any file was already uploaded to PyPI, never reuse that version. Bump to the
