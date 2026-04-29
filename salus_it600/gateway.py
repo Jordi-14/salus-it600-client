@@ -74,6 +74,7 @@ _SQ610_WRITE_HEATING_SETPOINT = "SetHeatingSetpoint_x100"
 _SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
 _SQ610_WRITE_HOLD_TYPE = "SetHoldType"
 _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
+_TRANSIENT_WRITE_RETRY_DELAY = 0.2
 DeviceT = TypeVar(
     "DeviceT",
     ClimateDevice,
@@ -320,6 +321,7 @@ class IT600Gateway:
         self._host = host
         self._port = port
         self._request_timeout = request_timeout
+        self._transient_write_retry_delay = _TRANSIENT_WRITE_RETRY_DELAY
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
 
@@ -1424,97 +1426,117 @@ class IT600Gateway:
                 self._session = aiohttp.ClientSession()
                 self._close_session = True
 
-            try:
-                request_url = f"http://{self._host}:{self._port}/deviceid/{command}"
-                request_body_json = json.dumps(request_body)
+            request_url = f"http://{self._host}:{self._port}/deviceid/{command}"
+            request_body_json = json.dumps(request_body)
+            retry_attempts = 2 if command == "write" else 1
 
-                if self._debug:
+            if self._debug:
+                _LOGGER.debug(
+                    "Gateway request: POST %s\n%s\n", request_url, request_body_json
+                )
+
+            if self._protocol is not None:
+                request_payload = self._protocol.wrap_request(request_body_json)
+            else:
+                request_payload = self._encryptor.encrypt(request_body_json)
+
+            for attempt in range(retry_attempts):
+                if attempt:
                     _LOGGER.debug(
-                        "Gateway request: POST %s\n%s\n", request_url, request_body_json
+                        "Gateway disconnected during write request; retrying once"
                     )
+                    if self._transient_write_retry_delay > 0:
+                        await asyncio.sleep(self._transient_write_retry_delay)
 
-                if self._protocol is not None:
-                    request_payload = self._protocol.wrap_request(request_body_json)
-                else:
-                    request_payload = self._encryptor.encrypt(request_body_json)
+                try:
+                    async with asyncio.timeout(self._request_timeout):
+                        resp = await self._session.post(
+                            request_url,
+                            data=request_payload,
+                            headers={"content-type": "application/json"},
+                        )
+                        response_bytes = await resp.read()
+                        _validate_http_status(
+                            getattr(resp, "status", 200),
+                            command,
+                        )
+                        _raise_for_gateway_frame(response_bytes, command)
 
-                async with asyncio.timeout(self._request_timeout):
-                    resp = await self._session.post(
-                        request_url,
-                        data=request_payload,
-                        headers={"content-type": "application/json"},
-                    )
-                    response_bytes = await resp.read()
-                    _validate_http_status(
-                        getattr(resp, "status", 200),
-                        command,
-                    )
-                    _raise_for_gateway_frame(response_bytes, command)
+                        try:
+                            if self._protocol is not None:
+                                response_json_string = self._protocol.unwrap_response(
+                                    response_bytes
+                                )
+                            else:
+                                response_json_string = self._encryptor.decrypt(
+                                    response_bytes
+                                )
+                        except Exception as e:
+                            raise IT600CommandError(
+                                f"Failed to decrypt gateway response for '{command}' "
+                                f"request"
+                            ) from e
 
-                    try:
-                        if self._protocol is not None:
-                            response_json_string = self._protocol.unwrap_response(
-                                response_bytes
-                            )
-                        else:
-                            response_json_string = self._encryptor.decrypt(
-                                response_bytes
-                            )
-                    except Exception as e:
-                        raise IT600CommandError(
-                            f"Failed to decrypt gateway response for '{command}' "
-                            f"request"
-                        ) from e
+                        if self._debug:
+                            _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
 
-                    if self._debug:
-                        _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
-
-                    response_json = _validate_gateway_response(
-                        json.loads(response_json_string),
-                        command,
-                    )
-
-                    if response_json["status"] != "success":
-                        repr_request_body = repr(request_body)
-                        repr_response_body = repr(response_json)
-
-                        _LOGGER.error("%s failed: %s", command, repr_request_body)
-                        raise IT600CommandError(
-                            f"iT600 gateway rejected '{command}' command with content "
-                            f"'{repr_request_body}' and response '{repr_response_body}'"
+                        response_json = _validate_gateway_response(
+                            json.loads(response_json_string),
+                            command,
                         )
 
-                    return response_json
-            except asyncio.TimeoutError as e:
-                _LOGGER.error("Timeout while connecting to gateway: %s", e)
-                raise IT600ConnectionError(
-                    "Error occurred while communicating with iT600 gateway: timeout"
-                ) from e
-            except client_exceptions.ClientConnectorError as e:
-                raise IT600ConnectionError(
-                    "Error occurred while communicating with iT600 gateway: "
-                    "check if you have specified host/IP address correctly"
-                ) from e
-            except client_exceptions.ClientError as e:
-                raise IT600ConnectionError(
-                    "Error occurred while communicating with iT600 gateway"
-                ) from e
-            except json.JSONDecodeError as e:
-                _LOGGER.error("Gateway returned invalid JSON for %s command", command)
-                raise IT600CommandError(
-                    "Invalid JSON response received from iT600 gateway"
-                ) from e
-            except (
-                IT600CommandError,
-                IT600ConnectionError,
-                IT600UnsupportedFirmwareError,
-            ):
-                raise
-            except Exception:
-                _LOGGER.exception(
-                    "Unexpected error while communicating with iT600 gateway"
-                )
-                raise
+                        if response_json["status"] != "success":
+                            repr_request_body = repr(request_body)
+                            repr_response_body = repr(response_json)
+
+                            _LOGGER.error("%s failed: %s", command, repr_request_body)
+                            raise IT600CommandError(
+                                f"iT600 gateway rejected '{command}' command with "
+                                f"content '{repr_request_body}' and response "
+                                f"'{repr_response_body}'"
+                            )
+
+                        return response_json
+                except client_exceptions.ServerDisconnectedError as e:
+                    if attempt < retry_attempts - 1:
+                        continue
+                    raise IT600ConnectionError(
+                        "Error occurred while communicating with iT600 gateway"
+                    ) from e
+                except asyncio.TimeoutError as e:
+                    _LOGGER.error("Timeout while connecting to gateway: %s", e)
+                    raise IT600ConnectionError(
+                        "Error occurred while communicating with iT600 gateway: timeout"
+                    ) from e
+                except client_exceptions.ClientConnectorError as e:
+                    raise IT600ConnectionError(
+                        "Error occurred while communicating with iT600 gateway: "
+                        "check if you have specified host/IP address correctly"
+                    ) from e
+                except client_exceptions.ClientError as e:
+                    raise IT600ConnectionError(
+                        "Error occurred while communicating with iT600 gateway"
+                    ) from e
+                except json.JSONDecodeError as e:
+                    _LOGGER.error("Gateway returned invalid JSON for %s command", command)
+                    raise IT600CommandError(
+                        "Invalid JSON response received from iT600 gateway"
+                    ) from e
+                except (
+                    IT600CommandError,
+                    IT600ConnectionError,
+                    IT600UnsupportedFirmwareError,
+                ):
+                    raise
+                except Exception:
+                    _LOGGER.exception(
+                        "Unexpected error while communicating with iT600 gateway"
+                    )
+                    raise
+
+            raise IT600ConnectionError(
+                "Error occurred while communicating with iT600 gateway"
+            )
 
     async def close(self) -> None:
         """Close the internally owned aiohttp session, if one was created."""
