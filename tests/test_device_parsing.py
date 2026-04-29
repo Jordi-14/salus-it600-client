@@ -207,6 +207,7 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(device.is_opening)
         self.assertFalse(device.is_closing)
         self.assertFalse(device.is_closed)
+        self.assertEqual("shutter", device.device_class)
 
     async def test_cover_parser_skips_disabled_endpoint(self):
         gateway = make_gateway_with_response(

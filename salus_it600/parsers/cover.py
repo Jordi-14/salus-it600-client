@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..const import SUPPORT_CLOSE, SUPPORT_OPEN, SUPPORT_SET_POSITION
+from ..device_models import cover_device_class, model_identifier
 from ..models import CoverDevice
 from .common import _common_device_args
 
@@ -41,5 +42,5 @@ def parse_cover_device(device_status: dict[str, Any]) -> CoverDevice | None:
         is_closing=None if set_position is None else current_position > set_position,
         is_closed=current_position == 0,
         supported_features=SUPPORT_OPEN | SUPPORT_CLOSE | SUPPORT_SET_POSITION,
-        device_class=None,
+        device_class=cover_device_class(model_identifier(device_status)),
     )

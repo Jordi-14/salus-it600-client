@@ -73,6 +73,8 @@ from .const import HoldType, RunningState, SystemMode
 MODEL_FC600 = "FC600"
 MODEL_SP600 = "SP600"
 MODEL_SPE600 = "SPE600"
+MODEL_RS600 = "RS600"
+MODEL_SR600 = "SR600"
 MODEL_SW600 = "SW600"
 MODEL_OS600 = "OS600"
 MODEL_WLS600 = "WLS600"
@@ -98,6 +100,10 @@ BINARY_SENSOR_DEVICE_CLASSES = {
     MODEL_RECEIVER: "running",
 }
 OUTLET_MODELS = {MODEL_SP600, MODEL_SPE600}
+COVER_DEVICE_CLASSES = {
+    MODEL_RS600: "shutter",
+    MODEL_SR600: "shutter",
+}
 SKIPPED_BINARY_SENSOR_MODELS = {MODEL_BUTTON}
 BATTERY_OEM_MODELS = frozenset(
     {
@@ -278,3 +284,10 @@ def switch_device_class(model: str | None) -> str:
         "switch"
     """
     return "outlet" if model in OUTLET_MODELS else "switch"
+
+
+def cover_device_class(model: str | None) -> str | None:
+    """Return the Home Assistant-style cover device class."""
+    if model is None:
+        return None
+    return COVER_DEVICE_CLASSES.get(model)

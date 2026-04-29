@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4 - 2026-04-29
+
+Device metadata:
+
+- Mark RS600/SR600 cover devices as Home Assistant `shutter` covers.
+
 ## 0.4.3 - 2026-04-29
 
 P3 command reliability:
