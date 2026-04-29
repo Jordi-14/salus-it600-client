@@ -1,0 +1,36 @@
+{
+  "data": {
+    "UniID": "trv_1",
+    "Endpoint": 1
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Bedroom TRV\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "TRV3RF"
+  },
+  "sTherS": {
+    "LocalTemperature_x100": 2015,
+    "HeatingSetpoint_x100": 2100,
+    "MinHeatSetpoint_x100": 500,
+    "MaxHeatSetpoint_x100": 3500,
+    "RunningState": 1
+  },
+  "sComm": {
+    "HoldType": 2,
+    "DeviceErrorCode": "0000000000000001",
+    "OpenWindowStatus": 1
+  },
+  "sIT6ZB": {
+    "TRVOutputPercentage": 45
+  },
+  "sPowerS": {
+    "BatteryVoltage_x10": 27
+  }
+}

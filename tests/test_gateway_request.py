@@ -425,19 +425,50 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             raw_props["sq610-1"],
         )
 
-    async def test_write_sq610_property_writes_sit600th_payload(self):
+    async def test_set_sq610_device_temperature_writes_selected_setpoint(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = make_climate_device("sq610-1")._replace(
+            model="SQ610RF",
+            min_temp=5.0,
+            max_temp=35.0,
+        )
+
+        await gateway.set_sq610_device_temperature(
+            "sq610-1",
+            22.3,
+            cooling=True,
+        )
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetCoolingSetpoint_x100": 2250},
+            request["id"][0]["sIT600TH"],
+        )
+
+    async def test_set_sq610_device_hvac_mode_writes_system_mode(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
         gateway._climate_devices["sq610-1"] = make_climate_device("sq610-1")._replace(
             model="SQ610RF"
         )
 
-        await gateway.write_sq610_property("sq610-1", "SetSystemMode", 3)
+        await gateway.set_sq610_device_hvac_mode("sq610-1", HVAC_MODE_COOL)
 
         request = json.loads(session.post_calls[0][1]["data"])
-        self.assertEqual("write", request["requestAttr"])
-        self.assertEqual({"UniID": "sq610-1"}, request["id"][0]["data"])
         self.assertEqual({"SetSystemMode": 3}, request["id"][0]["sIT600TH"])
+
+    async def test_set_sq610_device_preset_writes_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = make_climate_device("sq610-1")._replace(
+            model="SQ610RF"
+        )
+
+        await gateway.set_sq610_device_preset("sq610-1", PRESET_FOLLOW_SCHEDULE)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 0}, request["id"][0]["sIT600TH"])
 
     async def test_public_commands_reject_blank_device_id(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})

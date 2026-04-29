@@ -19,10 +19,10 @@ When adding support for a new Salus device model:
 
 3. **Add protocol constants if unique**:
    - If climate with cooling: Add SQ610_MODE_* and SQ610_HOLD_* constants
-   - If custom write properties: Add SQ610_WRITE_* constants
+   - Keep raw write property names private to gateway command methods
 
-4. **Create parser function in gateway.py**:
-   - Named `_parse_DEVICETYPE_MODELNAME()`
+4. **Create parser function in `salus_it600/parsers/`**:
+   - Place it in the module for the device family
    - Extract fields from gateway payload dict
    - Return Device model instance or None if invalid
    - Use `model_identifier()` helper to get model from payload
@@ -48,8 +48,9 @@ standard models. Key differences:
 - **Hold type variants**: SQ610 uses hold type 7 for standby (Off), but also
   supports hold type 0 (auto return to schedule).
 
-- **Write property names**: When setting SQ610 state, use properties from
-  `SQ610_WRITE_*` constants rather than generic field names.
+- **Write property names**: SQ610 write property names differ from read names.
+  Keep these names private to client gateway methods instead of exposing them to
+  callers.
 
 ## Device Classification
 
@@ -129,11 +130,6 @@ SQ610_HOLD_STANDBY = HoldType.STANDBY
 
 SQ610_RUNNING_HEAT = RunningState.HEATING
 SQ610_RUNNING_COOL = RunningState.COOLING
-
-SQ610_WRITE_HEATING_SETPOINT = "SetHeatingSetpoint_x100"
-SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
-SQ610_WRITE_HOLD_TYPE = "SetHoldType"
-SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 
 
 def model_identifier(device_status: dict[str, Any]) -> str | None:

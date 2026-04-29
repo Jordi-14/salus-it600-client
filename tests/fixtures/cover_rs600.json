@@ -1,0 +1,25 @@
+{
+  "data": {
+    "UniID": "cover_1",
+    "Endpoint": 1
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Living Room Blind\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "RS600"
+  },
+  "sLevelS": {
+    "CurrentLevel": 25,
+    "MoveToLevel_f": "50FFFF"
+  },
+  "sButtonS": {
+    "Mode": 1
+  }
+}

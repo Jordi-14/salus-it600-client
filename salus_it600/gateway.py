@@ -17,6 +17,7 @@ from .const import (
     HVAC_MODE_COOL,
     HVAC_MODE_OFF,
     PRESET_OFF,
+    PRESET_FOLLOW_SCHEDULE,
     PRESET_PERMANENT_HOLD,
     PRESET_TEMPORARY_HOLD,
     PRESET_ECO,
@@ -29,7 +30,7 @@ from .const import (
     SystemMode,
     TEMPERATURE_SCALE,
 )
-from ._device_parsers import (
+from .parsers import (
     PARSING_EXCEPTIONS,
     parse_binary_diagnostic_devices,
     parse_binary_sensor_device,
@@ -69,6 +70,10 @@ from .models import (
 _LOGGER = logging.getLogger("salus_it600")
 
 DEVICE_NOT_FOUND_ERROR = "{device_type} device not found with id: {device_id}"
+_SQ610_WRITE_HEATING_SETPOINT = "SetHeatingSetpoint_x100"
+_SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
+_SQ610_WRITE_HOLD_TYPE = "SetHoldType"
+_SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 DeviceT = TypeVar(
     "DeviceT",
     ClimateDevice,
@@ -547,7 +552,7 @@ class IT600Gateway:
 
         Example:
             To add a new device type (e.g. "dimmer"):
-            1. Add parser function `_parse_dimmer_device()`
+            1. Add parser function `parse_dimmer_device()`
             2. Add filter in `poll_status()` to find dimmer devices
             3. Call `_refresh_device_collection()` with the filter results
         """
@@ -883,6 +888,13 @@ class IT600Gateway:
             )
         return device
 
+    def _require_sq610_climate_device(self, device_id: str) -> ClimateDevice:
+        """Return an SQ610 climate device or raise a typed validation error."""
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        if not is_sq610_model(device.model):
+            raise ValueError(f"climate device {device_id!r} is not an SQ610")
+        return device
+
     def get_gateway_device(self) -> GatewayDevice | None:
         """Return the cached gateway device, if `poll_status()` has found it."""
 
@@ -1015,26 +1027,13 @@ class IT600Gateway:
 
         return raw_properties
 
-    async def write_sq610_property(
+    async def _write_sq610_property(
         self,
-        device_id: str,
+        device: ClimateDevice,
         prop: str,
         value: int,
     ) -> None:
-        """Write one raw SQ610 `sIT600TH` property.
-
-        This intentionally exposes only the SQ610 write path currently required
-        by Home Assistant instead of making the full encrypted request API
-        public.
-        """
-        device = self._require_device(device_id, self._climate_devices, "climate")
-        if not is_sq610_model(device.model):
-            raise ValueError(f"climate device {device_id!r} is not an SQ610")
-
-        prop = _validate_non_empty_string(prop, "prop")
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise TypeError("value must be an integer")
-
+        """Write one validated SQ610 `sIT600TH` property for a cached device."""
         await self._make_encrypted_request(
             "write",
             {
@@ -1046,6 +1045,70 @@ class IT600Gateway:
                     }
                 ],
             },
+        )
+
+    async def set_sq610_device_temperature(
+        self,
+        device_id: str,
+        setpoint_celsius: float,
+        *,
+        cooling: bool = False,
+    ) -> None:
+        """Set an SQ610 heating or cooling setpoint in Celsius."""
+        if not isinstance(cooling, bool):
+            raise TypeError("cooling must be a bool")
+
+        device = self._require_sq610_climate_device(device_id)
+        setpoint_celsius = _validate_setpoint(
+            setpoint_celsius,
+            device.min_temp,
+            device.max_temp,
+        )
+        rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
+        prop = (
+            _SQ610_WRITE_COOLING_SETPOINT
+            if cooling
+            else _SQ610_WRITE_HEATING_SETPOINT
+        )
+
+        await self._write_sq610_property(device, prop, rounded_setpoint)
+
+    async def set_sq610_device_hvac_mode(self, device_id: str, mode: str) -> None:
+        """Set an SQ610 HVAC mode."""
+        device = self._require_sq610_climate_device(device_id)
+        mode = _validate_supported_value(
+            mode,
+            "mode",
+            [HVAC_MODE_HEAT, HVAC_MODE_COOL],
+        )
+        system_mode = SystemMode.COOL if mode == HVAC_MODE_COOL else SystemMode.HEAT
+
+        await self._write_sq610_property(
+            device,
+            _SQ610_WRITE_SYSTEM_MODE,
+            int(system_mode),
+        )
+
+    async def set_sq610_device_preset(self, device_id: str, preset: str) -> None:
+        """Set an SQ610 hold/preset mode."""
+        device = self._require_sq610_climate_device(device_id)
+        preset = _validate_supported_value(
+            preset,
+            "preset",
+            [PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
+        )
+        hold_type = (
+            HoldType.STANDBY
+            if preset == PRESET_OFF
+            else HoldType.PERMANENT_HOLD
+            if preset == PRESET_PERMANENT_HOLD
+            else HoldType.FOLLOW_SCHEDULE
+        )
+
+        await self._write_sq610_property(
+            device,
+            _SQ610_WRITE_HOLD_TYPE,
+            int(hold_type),
         )
 
     async def set_cover_position(self, device_id: str, position: int) -> None:

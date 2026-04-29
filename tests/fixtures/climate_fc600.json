@@ -1,0 +1,36 @@
+{
+  "data": {
+    "UniID": "fan_1",
+    "Endpoint": 1
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Fan Coil\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "FC600"
+  },
+  "sTherS": {
+    "SystemMode": 3,
+    "LocalTemperature_x100": 2420,
+    "HeatingSetpoint_x100": 2100,
+    "CoolingSetpoint_x100": 2300,
+    "MinCoolSetpoint_x100": 1600,
+    "MaxCoolSetpoint_x100": 3200,
+    "RunningState": 66
+  },
+  "sComm": {
+    "HoldType": 10
+  },
+  "sFanS": {
+    "FanMode": 3
+  },
+  "sTherUIS": {
+    "LockKey": 1
+  }
+}
