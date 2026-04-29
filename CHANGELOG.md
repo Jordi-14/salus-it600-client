@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3 - 2026-04-29
+
+P3 command reliability:
+
+- Retry a transient gateway server disconnect once for encrypted write requests.
+  Read requests are not retried, and writes still fail after the single retry.
+
 ## 0.4.2 - 2026-04-29
 
 P2 maintainability:
