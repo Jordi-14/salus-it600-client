@@ -2,6 +2,11 @@
 
 Exported with GitHub CLI.
 
+This is a maintainer backlog and historical reference for issues left in the
+upstream Python client. It is intentionally not a normal support document. Use
+it when looking for old protocol reports, device payload examples, gateway
+firmware problems, or client behavior that may still be useful for future work.
+
 ---
 
 ## #48: UG800 stopped working after recent firmware update

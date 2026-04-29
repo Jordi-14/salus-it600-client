@@ -83,9 +83,12 @@ Use the enums in `salus_it600.const` rather than raw integers:
 
 ## Adding Device Support
 
+Use [../CONTRIBUTING.md](../CONTRIBUTING.md) for the full contributor workflow. At the
+protocol level, the checklist is:
+
 1. Capture a `main.py --debug` payload from the gateway.
 2. Add or update model constants in `salus_it600/device_models.py`.
-3. Add a parser in `salus_it600/gateway.py`.
+3. Add or update the parser in the matching `salus_it600/parsers/` module.
 4. Register the parser in `poll_status()` or an existing refresh method.
 5. Add tests for valid payloads, missing fields, malformed data, and callback
    behavior.

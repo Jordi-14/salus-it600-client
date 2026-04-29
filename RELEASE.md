@@ -44,10 +44,13 @@ reviewers if you want a final manual approval step before PyPI upload.
 1. Start from `master`.
 2. Create a feature or fix branch.
 3. Make the code change and add tests.
-4. Bump the version in both files:
+4. Run the local checks from [CONTRIBUTING.md](CONTRIBUTING.md).
+5. For user-facing or Home Assistant-facing behavior, test the branch with Home
+   Assistant using [CONTRIBUTING.md](CONTRIBUTING.md).
+6. Bump the version in both files:
    - `pyproject.toml`
    - `salus_it600/__version__.py`
-5. Open and merge the branch into `master` after CI passes.
+7. Open and merge the branch into `master` after CI passes.
 
 Use semantic-ish versioning:
 
