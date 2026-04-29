@@ -68,7 +68,10 @@ def is_new_protocol_frame(raw: bytes) -> bool:
 class GatewayProtocol(abc.ABC):
     """Contract implemented by Salus gateway encryption protocols."""
 
-    name: str
+    @property
+    @abc.abstractmethod
+    def name(self) -> str:
+        """Return a human-readable protocol label."""
 
     @abc.abstractmethod
     def encrypt(self, plaintext: str) -> bytes:

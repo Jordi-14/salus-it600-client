@@ -116,10 +116,16 @@ class AesCbcProtocol(GatewayProtocol):
             ) from exc
 
         try:
-            result = json.loads(text)
+            parsed = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(f"Decrypted response is not valid JSON: {exc}") from exc
 
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"Decrypted response is not a JSON object: {type(parsed).__name__}"
+            )
+
+        result: dict[str, Any] = parsed
         if result.get("status") != "success":
             raise ValueError(f"status={result.get('status')}")
         return result
