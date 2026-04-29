@@ -21,7 +21,11 @@ from salus_it600.const import (
     PRESET_PERMANENT_HOLD,
     PRESET_TEMPORARY_HOLD,
 )
-from salus_it600.exceptions import IT600CommandError, IT600ConnectionError
+from salus_it600.exceptions import (
+    IT600CommandError,
+    IT600ConnectionError,
+    IT600UnsupportedFirmwareError,
+)
 from salus_it600.gateway import IT600Gateway
 from salus_it600.models import ClimateDevice
 
@@ -39,26 +43,35 @@ class PassthroughEncryptor:
 class FakeResponse:
     """Minimal aiohttp response stand-in."""
 
-    def __init__(self, payload):
+    def __init__(self, payload, status: int = 200):
         self._payload = payload
+        self.status = status
 
     async def read(self) -> bytes:
+        if isinstance(self._payload, bytes):
+            return self._payload
         return json.dumps(self._payload).encode("utf-8")
 
 
 class FakeSession:
     """Minimal aiohttp session stand-in."""
 
-    def __init__(self, payload: dict | None = None, error: Exception | None = None):
+    def __init__(
+        self,
+        payload: dict | list | bytes | None = None,
+        error: Exception | None = None,
+        status: int = 200,
+    ):
         self.payload = payload
         self.error = error
+        self.status = status
         self.post_calls = []
 
     async def post(self, url: str, **kwargs) -> FakeResponse:
         self.post_calls.append((url, kwargs))
         if self.error is not None:
             raise self.error
-        return FakeResponse(self.payload)
+        return FakeResponse(self.payload, self.status)
 
     async def get(self, url: str) -> FakeResponse:
         return FakeResponse({})
@@ -158,6 +171,42 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertIn("timeout", str(context.exception))
+
+    async def test_make_encrypted_request_maps_http_error_to_connection_error(self):
+        session = FakeSession({"status": "fail"}, status=503)
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600ConnectionError) as context:
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertIn("HTTP status 503", str(context.exception))
+
+    async def test_make_encrypted_request_maps_protocol_frame_to_firmware_error(self):
+        session = FakeSession(bytes(32) + b"\xaf")
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600UnsupportedFirmwareError) as context:
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertIn("new-protocol frame", str(context.exception))
+
+    async def test_make_encrypted_request_maps_decrypt_error_to_command_error(self):
+        session = FakeSession(b"\xff")
+        gateway = make_gateway(session)
+
+        with self.assertRaises(IT600CommandError) as context:
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertIn("Failed to decrypt gateway response", str(context.exception))
 
     async def test_make_encrypted_request_rejects_non_object_response(self):
         session = FakeSession(["not", "an", "object"])
