@@ -1,0 +1,22 @@
+{
+  "data": {
+    "UniID": "leak_1",
+    "Endpoint": 1
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Leak Sensor\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "WLS600"
+  },
+  "sIASZS": {
+    "ErrorIASZSAlarmed1": 1,
+    "ErrorIASZSLowBattery": 1
+  }
+}

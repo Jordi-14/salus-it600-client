@@ -1,0 +1,27 @@
+{
+  "data": {
+    "UniID": "sensor_1",
+    "Endpoint": 1
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Hall Sensor\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "TS600"
+  },
+  "sTempS": {
+    "MeasuredValue_x100": 2215
+  },
+  "sRelativeHumidity": {
+    "MeasuredValue_x100": 4550
+  },
+  "sPowerS": {
+    "BatteryVoltage_x10": 29
+  }
+}

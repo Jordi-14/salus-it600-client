@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.4.2 - 2026-04-29
+
+P2 maintainability:
+
+- Add higher-level SQ610 client write methods for setpoint, HVAC mode, and
+  preset/hold state so Home Assistant does not need to pass raw gateway
+  property names.
+- Remove the public raw SQ610 property write helper; SQ610 writes now go through
+  semantic client methods only.
+- Split gateway detail payload parsing into device-family modules under
+  `salus_it600.parsers`.
+- Add realistic JSON payload fixtures and parser regression tests for SQ610,
+  FC600, TRV3RF, WLS600, TS600, SPE600, and RS600 devices.
+- Document the model-shape decision to keep public device models as
+  `NamedTuple` classes for now.
+
+## 0.4.1 - 2026-04-29
 
 P1 near-term hardening:
 
@@ -19,7 +35,3 @@ P0 release hardening for the current `salus-it600-client 0.4.0` client line.
 - Require strict mypy in CI and the PyPI publish workflow.
 - Tighten protocol connect typing by validating decrypted protocol responses
   are JSON objects before returning them.
-
-Before publishing the next client release, bump both `pyproject.toml` and
-`salus_it600/__version__.py`, then update `homeassistant_salus` to pin that
-published client version.

@@ -1,0 +1,29 @@
+{
+  "data": {
+    "UniID": "sq610_1",
+    "Endpoint": 1
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Kitchen Thermostat\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "SQ610RF"
+  },
+  "sIT600TH": {
+    "LocalTemperature_x100": 2015,
+    "HeatingSetpoint_x100": 2100,
+    "SunnySetpoint_x100": 4550,
+    "Status_d": "00000000000021340000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000",
+    "OUTSensorProbe": 1,
+    "HoldType": 2,
+    "RunningState": 0,
+    "Error02": 1,
+    "Error32": 1
+  }
+}

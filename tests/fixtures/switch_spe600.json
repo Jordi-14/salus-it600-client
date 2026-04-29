@@ -1,0 +1,25 @@
+{
+  "data": {
+    "UniID": "switch_1",
+    "Endpoint": 2
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Kitchen Plug\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "SALUS"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "SPE600"
+  },
+  "sOnOffS": {
+    "OnOff": 1
+  },
+  "sMeteringS": {
+    "InstantaneousDemand": 42,
+    "CurrentSummationDelivered": 12345
+  }
+}

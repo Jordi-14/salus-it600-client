@@ -175,7 +175,7 @@ BINARY_SENSOR_DEVICE_CLASSES = {
 
 #### Step 3: Create Parser Function
 
-Add to `salus_it600/gateway.py`:
+Add to the matching device-family module under `salus_it600/parsers/`:
 
 ```python
 def _parse_mydevice_device(device_status: dict[str, Any]) -> MyDeviceModel | None:
@@ -203,7 +203,8 @@ def _parse_mydevice_device(device_status: dict[str, Any]) -> MyDeviceModel | Non
 
 #### Step 4: Register Parser in Poll Loop
 
-In `poll_status()` method:
+In `salus_it600/gateway.py`, update `poll_status()` or the relevant refresh
+method if the new device needs a new payload filter:
 
 ```python
 # Add filter for your device type
@@ -310,27 +311,21 @@ SQ610_HOLD_PERMANENT = 2   # Keep setpoint
 SQ610_HOLD_STANDBY = 7     # Off
 ```
 
-#### Write Property Names
+#### Client Write Methods
 
-When commanding SQ610 devices, use the correct write property names:
+When commanding SQ610 devices, use the semantic gateway methods. Raw SQ610 write
+property names are intentionally private to the client:
 
 ```python
-# Import from device_models
-from salus_it600.device_models import SQ610_WRITE_HEATING_SETPOINT
-from salus_it600.device_models import SQ610_WRITE_SYSTEM_MODE
-
-# Use in write request
-{
-    "sTherS": {
-        SQ610_WRITE_HEATING_SETPOINT: int(temperature * 100)
-    },
-    "sTherS": {
-        SQ610_WRITE_SYSTEM_MODE: 4  # 3=cool, 4=heat, 5=emergency
-    }
-}
+await gateway.set_sq610_device_temperature("thermostat_id", 21.5)
+await gateway.set_sq610_device_temperature("thermostat_id", 24.0, cooling=True)
+await gateway.set_sq610_device_hvac_mode("thermostat_id", "cool")
+await gateway.set_sq610_device_preset("thermostat_id", "Follow Schedule")
 ```
 
-All SQ610 protocol constants are centralized in `salus_it600/device_models.py` as single source of truth.
+Read-side SQ610 protocol constants and classification helpers are centralized in
+`salus_it600/device_models.py`. Raw write property names stay inside
+`salus_it600/gateway.py` so integrations do not need protocol field knowledge.
 
 ### Contributing
 
