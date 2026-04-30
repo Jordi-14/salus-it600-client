@@ -1,10 +1,15 @@
 salus-it600-client
 
+Copyright 2020 Julius Vitkauskas (original pyit600)
+Copyright 2026 Jordi Albareda Fortuny
+Copyright 2026 Leonard Pitzu
+
+Licensed under the Apache License, Version 2.0.
+
 This project is a maintained fork/successor of:
 
-- https://github.com/epoplavskis/pyit600
+- https://github.com/epoplavskis/pyit600 (MIT, Julius Vitkauskas)
 
-It also incorporates and reworks feature ideas and code from Leonard Pitzu's
-MIT-licensed fork:
+It incorporates protocol, parser, and device-support work from:
 
-- https://github.com/leonardpitzu/homeassistant_salus
+- https://github.com/leonardpitzu/homeassistant_salus (MIT, Leonard Pitzu)
