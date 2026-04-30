@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
+    branches: [main, master, "feature/**"]
   pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -19,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install lint and type-check tools
         run: |
@@ -58,10 +60,11 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          python -m pip install -e .[dev]
+          python -m pip install pytest pytest-asyncio pytest-cov
 
       - name: Run unit tests
-        run: python -m unittest
+        run: python -m pytest tests/ -v --cov=salus_it600 --cov-report=term-missing --cov-fail-under=70
 
       - name: Import smoke test
         run: |

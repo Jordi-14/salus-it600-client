@@ -71,3 +71,7 @@ source = ["salus_it600"]
 fail_under = 70
 show_missing = true
 skip_covered = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
