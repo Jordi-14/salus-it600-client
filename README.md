@@ -174,12 +174,17 @@ Home Assistant config flows, entities, diagnostics, repairs, options,
 translations, and HACS releases live in
 `https://github.com/Jordi-14/homeassistant_salus`.
 
+## License
+
+This project is dual licensed under `MIT OR Apache-2.0`. See [LICENSE](LICENSE),
+[LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
+
 ## Project Origin
 
 This project is a maintained fork/successor of `epoplavskis/pyit600`.
 It was renamed from the `pyit600` Python import namespace to `salus_it600`
 to avoid collisions with the original unmaintained package while preserving
-the original MIT license and attribution.
+the original MIT notices and attribution.
 
 The maintained client also includes protocol and device-support work informed
 by Leonard Pitzu's `https://github.com/leonardpitzu/homeassistant_salus` fork,

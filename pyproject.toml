@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77", "wheel", "packaging>=24.2"]
+requires = ["setuptools>=77.0.3", "wheel", "packaging>=24.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.4.4"
 description = "Asynchronous Python client for Salus iT600 local gateways"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "NOTICE"]
 authors = [
   { name = "Julius Vitkauskas" },
   { name = "Jordi-14" }
