@@ -131,8 +131,8 @@ from salus_it600.gateway import IT600Gateway
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Project origin
 
-This project is a maintained fork of [epoplavskis/pyit600](https://github.com/epoplavskis/pyit600). It incorporates protocol, device-support, and parser work from [leonardpitzu/homeassistant_salus](https://github.com/leonardpitzu/homeassistant_salus). See [NOTICE](NOTICE) for full attribution.
+This project is a maintained fork of [epoplavskis/pyit600](https://github.com/epoplavskis/pyit600). It incorporates protocol, device-support, and parser work from [leonardpitzu/homeassistant_salus](https://github.com/leonardpitzu/homeassistant_salus).

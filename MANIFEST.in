@@ -1,5 +1,4 @@
 include LICENSE
-include NOTICE
 include README.md
 prune docs
 include docs/device-protocol.md
