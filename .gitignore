@@ -1,114 +1,28 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-
-# OSX useful to ignore
-*.DS_Store
-.AppleDouble
-.LSOverride
-
-# Thumbnails
-._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-env/
-build/
-develop-eggs/
-dist/
-dist-check/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
 *.egg-info/
-.installed.cfg
-*.egg
+dist/
+build/
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Virtual environments
+.venv/
+venv/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
+# Testing / coverage
 .coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*,cover
-.hypothesis/
+htmlcov/
 .pytest_cache/
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-
-# Sphinx documentation
-docs/_build/
-
-# pyenv
-.python-version
-
-# virtualenv
-.venv
-venv/
-ENV/
-
-# mypy
+# Linting
+.ruff_cache/
 .mypy_cache/
 
-# Visual Studio Code
-.vscode
+# IDEs
+.idea/
+.vscode/
+*.swp
 
-# IntelliJ Idea family of suites
-.idea
-*.iml
-
-## File-based project format:
-*.ipr
-*.iws
-
-## mpeltonen/sbt-idea plugin
-.idea_modules/
-
-# PyBuilder
-target/
-
-# Cookiecutter
-output/
-python_boilerplate/
+# OS
+.DS_Store
+Thumbs.db

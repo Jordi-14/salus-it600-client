@@ -1,26 +1,49 @@
 # salus-it600-client
 
-Asynchronous Python client for Salus iT600 devices.
+An asynchronous Python client for **local** control and monitoring of [Salus iT600](https://salus-controls.com/) smart home devices through UGE600 or UG800 gateways — thermostats, TRVs, smart plugs, roller shutters, sensors, and more, all without cloud dependency.
 
-This package is maintained at
-`https://github.com/Jordi-14/salus-it600-client`.
+## Features
 
-## For Home Assistant Users
+### Climate (thermostats & TRVs)
 
-Use `https://github.com/Jordi-14/homeassistant_salus` if you want the Home
-Assistant integration. That integration installs this client package as a
-dependency.
+| Device family | Capabilities |
+|---|---|
+| **iT600 / SQ610** | Heat/off/auto modes, Follow Schedule / Permanent Hold / Off presets, humidity (SQ610), floor temperature (external probe), battery level, 0.5 °C increments |
+| **FC600 fan-coil** | Heat/cool/auto modes, five presets, fan modes (auto/high/medium/low/off), separate heating/cooling setpoints |
+| **TRV3RF** | Heat/off/auto modes, valve opening %, battery (voltage curve), open-window detection, error code diagnostics |
 
-## About
+### Sensors
 
-This package allows Python applications to control and monitor Salus iT600 smart
-home devices locally through a Salus gateway with Local WiFi Mode enabled.
-Heating thermostats, TRV-style devices, binary sensors, temperature sensors,
-covers, switches, and metering sensors are supported.
+| Sensor | Source |
+|---|---|
+| Temperature | Standalone sensors (TS600, PS600) and thermostat readings |
+| Humidity | SQ610 (`SunnySetpoint_x100`) and standalone multi-sensors |
+| Floor temperature | SQ610 with external floor probe (`OUTSensorProbe`) |
+| Battery | Status_d (SQ610RF) and voltage curves (TRV, window/door sensors) |
+| Power (W) | Smart plug instantaneous demand (`sMeteringS`) |
+| Energy (kWh) | Smart plug cumulative consumption (`sMeteringS`) |
 
-If you have another device and would like to contribute support, open an issue
-or submit a pull request with redacted gateway diagnostics or `main.py --debug`
-output.
+### Binary sensors
+
+| Sensor | Source |
+|---|---|
+| Window / Door | SW600, OS600 (`sIASZS`) |
+| Water leak | WLS600 |
+| Smoke | SmokeSensor-EM |
+| TRV relay (heat) | it600MINITRV (`sIT600I.RelayStatus`) |
+| Receiver relay | it600Receiver |
+| Low battery | Diagnostic child on battery-powered sensors and TRVs |
+| Thermostat problem | Aggregated error flags (Error01–Error32) with descriptions |
+| Battery problem | Battery-specific error flags (battery models only) |
+| Open window | TRV open-window detection (`sComm.OpenWindowStatus`) |
+
+### Covers
+
+Roller shutters and blinds (SR600, RS600): open, close, set position (0–100 %).
+
+### Switches
+
+Smart plugs and relays (SP600, SPE600): on/off control. Dual-endpoint devices exposed as separate entities.
 
 ## Installation
 
@@ -28,167 +51,88 @@ output.
 pip install salus-it600-client
 ```
 
-## Migration From `pyit600`
-
-`salus-it600-client` is a renamed maintained successor of `pyit600`. It does
-not provide the old `pyit600` import namespace, so callers must update imports:
-
-```python
-from salus_it600.exceptions import IT600ConnectionError
-from salus_it600.gateway import IT600Gateway
-```
-
-If another project depends on this package, replace the old dependency with:
-
-```text
-salus-it600-client>=0.1.0
-```
-
-The first maintained release is `0.1.0`. It keeps the public API close to
-`pyit600 0.5.1`, while moving compatibility fixes for current Salus gateway
-payloads into this library.
-
 ## Usage
 
-Instantiate `IT600Gateway` with the local IP address and EUID of your gateway.
-The EUID is normally printed on the bottom of the gateway, for example
-`001E5E0D32906128`.
-
-Status can be polled using `poll_status()`. Callbacks can be registered with
-methods such as `add_climate_update_callback()` or
-`add_sensor_update_callback()`.
-
-### Basic Example
-
 ```python
 from salus_it600.gateway import IT600Gateway
 
-async with IT600Gateway(host=args.host, euid=args.euid) as gateway:
-    await gateway.connect()
-    await gateway.poll_status()
+async with IT600Gateway(host="192.168.1.100", euid="001E5E0D32906128") as gw:
+    await gw.connect()
+    await gw.poll_status()
 
-    climate_devices = gateway.get_climate_devices()
+    for device_id, device in gw.get_climate_devices().items():
+        print(f"{device.name}: {device.current_temperature}°C → {device.target_temperature}°C")
 
-    print("All climate devices:")
-    print(repr(climate_devices))
-
-    for climate_device_id in climate_devices:
-        print(f"Climate device {climate_device_id} status:")
-        print(repr(climate_devices.get(climate_device_id)))
-
-        print(f"Setting heating device {climate_device_id} temperature to 21 C")
-        await gateway.set_climate_device_temperature(climate_device_id, 21)
+    # Set temperature
+    await gw.set_climate_device_temperature("device_001", 21.5)
 ```
 
-## Supported Devices
+## Encryption & protocol support
 
-Thermostats:
+Salus gateways encrypt all local API traffic. The library **auto-detects** the correct protocol by trying each one in order during connection.
 
-- HTRP-RF(50)
-- TS600
-- VS10WRF/VS10BRF
-- VS20WRF/VS20BRF
-- SQ610
-- SQ610RF
-- FC600
+| | Legacy AES-CBC | AES-CCM (newer firmware) |
+|---|---|---|
+| **Gateways** | UGE600, older UG800 firmware | UG800 with newer firmware |
+| **Cipher** | AES-256-CBC (fallback: AES-128-CBC) | AES-256-CCM (authenticated encryption) |
+| **Key derivation** | `MD5("Salus-{euid}")` — static, derived from the gateway EUID | EUID bytes + hardcoded suffix — 32-byte key |
+| **IV / nonce** | Fixed 16-byte IV | 8-byte random nonce (3 random + 2-byte counter + 3-byte timestamp) |
+| **Authentication** | None | 8-byte MAC tag (CBC-MAC) |
+| **Padding** | PKCS7 | None (CCM handles arbitrary lengths) |
+| **Wire format** | Block-aligned encrypted HTTP body | `[ciphertext + 8-byte MAC][8-byte nonce]` |
 
-Binary sensors:
+Protocol auto-detection order:
+1. **AES-256-CBC** — legacy iT600 / UGE600 gateways
+2. **AES-128-CBC** — intermediate firmware variant
+3. **AES-CCM** — newer UG800 firmware
 
-- SW600
-- WLS600
-- OS600
-- SD600, when the gateway exposes the required information
-- TRV10RFM, heating state only
-- RX10RF, heating state only
+Rejected attempts are identified by a characteristic 33-byte reject frame (trailer byte `0xAE`).
 
-Temperature sensors:
+## Supported devices
 
-- PS600
+SQ610RF, SQ610RF(WB), SQ610RFNH, SQ610RFNH(WB), FC600, TRV3RF, it600MINITRV, it600Receiver, SP600, SPE600, SR600, RS600, SW600, OS600, WLS600, SmokeSensor-EM, SD600, TS600, RE600, RE10B, PS600.
 
-Switch devices:
+### Unsupported
 
-- SPE600
-- RS600
-- SR600
-
-Cover devices:
-
-- RS600
-- SR600
-
-## Unsupported Devices
-
-Buttons perform actions only in the Salus Smart Home app:
-
-- SB600
-- CSB600
-
-## Untested Devices
-
-These switch devices have not been tested, but may work:
-
-- SP600
-
-These binary sensors have not been tested, but may work:
-
-- MS600
+Buttons (SB600, CSB600) — actions only work through the Salus Smart Home app.
 
 ## Troubleshooting
 
-If you cannot connect using the EUID printed on the bottom of your gateway, try
-using `0000000000000000` as the EUID.
+- If you can't connect using the EUID on your gateway, try `0000000000000000` as EUID.
+- Make sure **Local WiFi Mode** is enabled:
+  1. Open the Salus Smart Home app and sign in.
+  2. Double-tap your gateway to open the info screen.
+  3. Press the gear icon to enter configuration.
+  4. Check that **Disable Local WiFi Mode** is set to **No**.
+  5. Save and power-cycle the gateway.
 
-Check that Local WiFi Mode is enabled:
+## Development
 
-1. Open the Salus Smart Home app.
-2. Sign in.
-3. Double tap your gateway to open the info screen.
-4. Open the gateway settings.
-5. Confirm `Disable Local WiFi Mode` is set to `No`.
-6. Save settings.
-7. Power-cycle the gateway.
+```bash
+python -m venv venv && source venv/bin/activate
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
 
-## Development And Testing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture details and contribution guidelines.
 
-Contributor documentation lives in [CONTRIBUTING.md](CONTRIBUTING.md).
-It covers:
+## Migration from `pyit600`
 
-- parser architecture and device model extension;
-- local quality checks;
-- testing unreleased client changes with Home Assistant;
-- coordinated client and integration branch testing before release;
-- SQ610 protocol notes.
+This package replaces the unmaintained `pyit600`. Update imports:
 
-Release publishing is documented in [RELEASE.md](RELEASE.md).
-Protocol notes live in [docs/device-protocol.md](docs/device-protocol.md).
-Archived upstream issue notes for future maintenance live in
-[docs/upstream-issues.md](docs/upstream-issues.md).
+```python
+# Old
+from pyit600.gateway import IT600Gateway
 
-## Maintenance Notes
-
-This package owns the reusable Salus gateway layer: connection handling,
-encryption, request framing, protocol negotiation, payload parsing, device
-models, and command payload construction.
-
-Home Assistant config flows, entities, diagnostics, repairs, options,
-translations, and HACS releases live in
-`https://github.com/Jordi-14/homeassistant_salus`.
+# New
+from salus_it600.gateway import IT600Gateway
+```
 
 ## License
 
-This project is dual licensed under `MIT OR Apache-2.0`. See [LICENSE](LICENSE),
-[LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE), and [NOTICE](NOTICE).
+MIT License. See [LICENSE](LICENSE) for details.
 
-## Project Origin
+## Project origin
 
-This project is a maintained fork/successor of `epoplavskis/pyit600`.
-It was renamed from the `pyit600` Python import namespace to `salus_it600`
-to avoid collisions with the original unmaintained package while preserving
-the original MIT notices and attribution.
-
-The maintained client also includes protocol and device-support work informed
-by Leonard Pitzu's `https://github.com/leonardpitzu/homeassistant_salus` fork,
-including UG800/new-firmware handling, broader parser coverage, TRV-related
-state, SQ610-related behavior, smart-plug metering, and lock support. The goal
-is to keep that low-level behavior reusable outside Home Assistant while the
-Home Assistant integration exposes it through entities and UI.
+This project is a maintained fork of [epoplavskis/pyit600](https://github.com/epoplavskis/pyit600). It incorporates protocol, device-support, and parser work from [leonardpitzu/homeassistant_salus](https://github.com/leonardpitzu/homeassistant_salus).
