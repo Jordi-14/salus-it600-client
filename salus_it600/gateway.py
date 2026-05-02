@@ -1297,7 +1297,7 @@ class IT600Gateway:
 
         request_data: dict[str, dict[str, int]] = {
             "sFanS": {
-                "FanMode": FanMode.AUTO
+                "SetFanMode": FanMode.AUTO
                 if mode == FAN_MODE_AUTO
                 else FanMode.HIGH
                 if mode == FAN_MODE_HIGH
