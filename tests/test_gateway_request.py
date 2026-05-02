@@ -345,7 +345,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual("write", request["requestAttr"])
-        self.assertEqual({"FanMode": 2}, request["id"][0]["sFanS"])
+        self.assertEqual({"SetFanMode": 2}, request["id"][0]["sFanS"])
         self.assertEqual({"UniID": "climate-1"}, request["id"][0]["data"])
 
     async def test_set_it600_climate_mode_off_writes_standby_hold(self):

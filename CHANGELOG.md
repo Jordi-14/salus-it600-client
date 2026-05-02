@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6 - 2026-05-02
+
+Bug fixes:
+
+- Send FC600 fan mode writes as `sFanS.SetFanMode`, matching the official
+  Salus local app payload.
+
 ## 0.4.4 - 2026-04-29
 
 Device metadata:
