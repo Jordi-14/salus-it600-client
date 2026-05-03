@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.7 - 2026-05-03
+
+Device support:
+
+- Add ECM600 energy meter parsing from `sMeterS` payloads, exposing per-endpoint
+  power, energy, and diagnostic battery sensors.
+- Treat FC600 model variants such as `FC600NH` as fan-coil thermostats for
+  parsing and climate write commands.
+
 ## 0.4.6 - 2026-05-02
 
 Bug fixes:
