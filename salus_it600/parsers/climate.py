@@ -39,7 +39,18 @@ from ..const import (
     SystemMode,
 )
 from ..device_models import BATTERY_OEM_MODELS, is_sq610_model, model_identifier
-from ..models import BinarySensorDevice, ClimateDevice, SensorDevice
+from ..models import (
+    BinarySensorDevice,
+    ClimateDevice,
+    SensorDevice,
+    active_climate_setpoint,
+    active_temperature_range,
+    climate_diagnostic_fields,
+    normalized_running_state,
+    normalized_system_mode,
+    sq610_cooling_capability_source,
+    sq610_supports_cooling,
+)
 from .common import (
     DEFAULT_RUNNING_STATE,
     _common_device_args,
@@ -79,19 +90,165 @@ def _thermostat_locked(
     return None
 
 
+def _payload_int(value: Any) -> int | None:
+    """Return an integer payload value, rejecting bools and non-integers."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _online_status(device_status: dict[str, Any]) -> int | None:
+    """Return the raw online status value when the payload exposes it."""
+    zdo_info = device_status.get("sZDOInfo")
+    if not isinstance(zdo_info, dict):
+        return None
+    return _payload_int(zdo_info.get("OnlineStatus_i"))
+
+
+def _sq610_hvac_mode(
+    *,
+    hold_type: int,
+    system_mode: int | None,
+    running_state: int | None,
+) -> str:
+    """Return the SQ610 Home Assistant-style HVAC mode."""
+    if hold_type == HoldType.STANDBY:
+        return HVAC_MODE_OFF
+    if system_mode == SystemMode.COOL or running_state == RunningState.COOLING:
+        return HVAC_MODE_COOL
+    return HVAC_MODE_HEAT
+
+
+def _sq610_hvac_action(
+    *,
+    hold_type: int,
+    running_state: int | None,
+) -> str:
+    """Return the SQ610 current action from its hold and running state."""
+    if hold_type == HoldType.STANDBY:
+        return CURRENT_HVAC_OFF
+    if running_state == RunningState.HEATING:
+        return CURRENT_HVAC_HEAT
+    if running_state == RunningState.COOLING:
+        return CURRENT_HVAC_COOL
+    return CURRENT_HVAC_IDLE
+
+
+def _sq610_preset_mode(hold_type: int) -> str:
+    """Return the SQ610 preset corresponding to HoldType."""
+    if hold_type == HoldType.STANDBY:
+        return PRESET_OFF
+    if hold_type == HoldType.PERMANENT_HOLD:
+        return PRESET_PERMANENT_HOLD
+    return PRESET_FOLLOW_SCHEDULE
+
+
+def _parse_sq610_climate_device(
+    device_status: dict[str, Any],
+    unique_id: str,
+    th: dict[str, Any],
+) -> ClimateDevice:
+    """Parse one SQ610 thermostat from gateway payload."""
+    s_temp = device_status.get("sTempS", {})
+    current_temperature = _temperature_from_x100(
+        th.get("LocalTemperature_x100"),
+        s_temp.get("MeasuredValue_x100") if isinstance(s_temp, dict) else None,
+    )
+    hold_type = _hold_type(th, unique_id)
+    system_mode = normalized_system_mode(th.get("SystemMode"))
+    running_state = normalized_running_state(th.get("RunningState"))
+    heating_setpoint = _temperature_from_x100(th.get("HeatingSetpoint_x100"))
+    cooling_setpoint = _temperature_from_x100(th.get("CoolingSetpoint_x100"))
+    min_heat_temp = _temperature_from_x100(th.get("MinHeatSetpoint_x100"))
+    max_heat_temp = _temperature_from_x100(th.get("MaxHeatSetpoint_x100"))
+    min_cool_temp = _temperature_from_x100(th.get("MinCoolSetpoint_x100"))
+    max_cool_temp = _temperature_from_x100(th.get("MaxCoolSetpoint_x100"))
+    active_setpoint = active_climate_setpoint(
+        system_mode=system_mode,
+        heating_setpoint=heating_setpoint,
+        cooling_setpoint=cooling_setpoint,
+    )
+    min_temp, max_temp = active_temperature_range(
+        system_mode=system_mode,
+        min_heat_temp=min_heat_temp,
+        max_heat_temp=max_heat_temp,
+        min_cool_temp=min_cool_temp,
+        max_cool_temp=max_cool_temp,
+    )
+    cooling_control = _payload_int(th.get("CoolingControl"))
+    cooling_capability_source = sq610_cooling_capability_source(
+        cooling_control=cooling_control,
+        system_mode=system_mode,
+        running_state=running_state,
+    )
+    supports_cooling = sq610_supports_cooling(
+        cooling_control=cooling_control,
+        system_mode=system_mode,
+        running_state=running_state,
+    )
+    online_status = _online_status(device_status)
+    diagnostic_payload = dict(th)
+    if online_status is not None:
+        diagnostic_payload["OnlineStatus_i"] = online_status
+
+    hvac_modes = (
+        (HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL)
+        if supports_cooling
+        else (HVAC_MODE_OFF, HVAC_MODE_HEAT)
+    )
+
+    return ClimateDevice(
+        **_climate_common_args(device_status, unique_id),
+        current_humidity=_humidity_percent(th.get("SunnySetpoint_x100")),
+        current_temperature=current_temperature,
+        target_temperature=active_setpoint if active_setpoint is not None else 20.0,
+        max_temp=max_temp if max_temp is not None else 35.0,
+        min_temp=min_temp if min_temp is not None else 5.0,
+        hvac_mode=_sq610_hvac_mode(
+            hold_type=hold_type,
+            system_mode=system_mode,
+            running_state=running_state,
+        ),
+        hvac_action=_sq610_hvac_action(
+            hold_type=hold_type,
+            running_state=running_state,
+        ),
+        hvac_modes=hvac_modes,
+        preset_mode=_sq610_preset_mode(hold_type),
+        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        fan_mode=None,
+        fan_modes=None,
+        locked=_thermostat_locked(device_status, th),
+        supported_features=SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE,
+        hold_type=hold_type,
+        system_mode=system_mode,
+        running_state=running_state,
+        heating_setpoint=heating_setpoint,
+        cooling_setpoint=cooling_setpoint,
+        min_heat_temp=min_heat_temp,
+        max_heat_temp=max_heat_temp,
+        min_cool_temp=min_cool_temp,
+        max_cool_temp=max_cool_temp,
+        heating_control=_payload_int(th.get("HeatingControl")),
+        cooling_control=cooling_control,
+        supports_cooling=supports_cooling,
+        supports_fan=False,
+        supports_heat=True,
+        online_status=online_status,
+        cooling_capability_source=cooling_capability_source,
+        diagnostic_fields=climate_diagnostic_fields(diagnostic_payload),
+    )
+
+
 def _parse_it600th_climate_device(
     device_status: dict[str, Any],
     unique_id: str,
     th: dict[str, Any],
 ) -> ClimateDevice:
-    """Parse one iT600 or SQ610 thermostat from gateway payload."""
-    model = model_identifier(device_status)
+    """Parse one standard iT600 thermostat from gateway payload."""
     s_temp = device_status.get("sTempS", {})
-    current_humidity = (
-        _humidity_percent(th.get("SunnySetpoint_x100"))
-        if is_sq610_model(model)
-        else None
-    )
     current_temperature = _temperature_from_x100(
         th.get("LocalTemperature_x100"),
         s_temp.get("MeasuredValue_x100") if isinstance(s_temp, dict) else None,
@@ -100,7 +257,7 @@ def _parse_it600th_climate_device(
     running_state = th.get("RunningState", DEFAULT_RUNNING_STATE)
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
-        current_humidity=current_humidity,
+        current_humidity=None,
         current_temperature=current_temperature,
         target_temperature=_temperature_from_x100_or_default(
             th.get("HeatingSetpoint_x100"),
@@ -469,6 +626,8 @@ def parse_climate_device(device_status: dict[str, Any]) -> ClimateDevice | None:
 
     th = device_status.get("sIT600TH")
     if isinstance(th, dict):
+        if is_sq610_model(model_identifier(device_status)):
+            return _parse_sq610_climate_device(device_status, unique_id, th)
         return _parse_it600th_climate_device(device_status, unique_id, th)
 
     ther = device_status.get("sTherS")
