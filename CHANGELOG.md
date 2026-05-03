@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.9 - 2026-05-03
+
+Bug fixes:
+
+- Parse SQ610/SQ610NH keypad lock state from `sIT600TH.LockKey` so Home
+  Assistant can create lock entities for Quantum thermostats.
+- Send SQ610/SQ610NH keypad lock writes through `sIT600TH.SetLockKey` instead
+  of the FC600-style `sTherUIS` path.
+
 ## 0.4.8 - 2026-05-03
 
 Device support:

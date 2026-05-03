@@ -398,6 +398,51 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(device)
         self.assertEqual(45.5, device.current_humidity)
 
+    async def test_sq610_lock_key_from_it600th_payload(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_locked", "SQ610NH"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "SunnySetpoint_x100": 63,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                            "LockKey": 1,
+                        },
+                    },
+                    {
+                        **common_detail("sq610_unlocked", "SQ610NH"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "SunnySetpoint_x100": 63,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                            "LockKey": 0,
+                        },
+                    },
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices(
+            [
+                {"data": {"UniID": "sq610_locked"}},
+                {"data": {"UniID": "sq610_unlocked"}},
+            ]
+        )
+
+        locked = gateway.get_climate_device("sq610_locked")
+        unlocked = gateway.get_climate_device("sq610_unlocked")
+        self.assertIsNotNone(locked)
+        self.assertIsNotNone(unlocked)
+        self.assertTrue(locked.locked)
+        self.assertFalse(unlocked.locked)
+
     async def test_sq610_adds_floor_battery_and_problem_children(self):
         status_d = "0" * 12 + "2134" + "0" * 83 + "4" + "0" * 10
         gateway = make_gateway_with_response(

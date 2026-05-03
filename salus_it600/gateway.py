@@ -75,6 +75,7 @@ _SQ610_WRITE_HEATING_SETPOINT = "SetHeatingSetpoint_x100"
 _SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
 _SQ610_WRITE_HOLD_TYPE = "SetHoldType"
 _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
+_SQ610_WRITE_LOCK_KEY = "SetLockKey"
 _TRANSIENT_WRITE_RETRY_DELAY = 0.2
 DeviceT = TypeVar(
     "DeviceT",
@@ -1374,6 +1375,14 @@ class IT600Gateway:
             raise TypeError("locked must be a bool")
 
         device = self._require_device(device_id, self._climate_devices, "climate")
+        if is_sq610_model(device.model):
+            await self._write_sq610_property(
+                device,
+                _SQ610_WRITE_LOCK_KEY,
+                1 if locked else 0,
+            )
+            return
+
         request_data: dict[str, dict[str, int]] = {
             "sTherUIS": {"SetLockKey": 1 if locked else 0}
         }

@@ -64,6 +64,21 @@ def _climate_common_args(
     }
 
 
+def _thermostat_locked(
+    device_status: dict[str, Any],
+    th: dict[str, Any] | None = None,
+) -> bool | None:
+    """Return thermostat keypad lock state when the payload exposes it."""
+    ther_ui = device_status.get("sTherUIS")
+    if isinstance(ther_ui, dict) and "LockKey" in ther_ui:
+        return ther_ui.get("LockKey") == 1
+
+    if th is not None and "LockKey" in th:
+        return th.get("LockKey") == 1
+
+    return None
+
+
 def _parse_it600th_climate_device(
     device_status: dict[str, Any],
     unique_id: str,
@@ -114,11 +129,7 @@ def _parse_it600th_climate_device(
         preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
         fan_mode=None,
         fan_modes=None,
-        locked=(
-            device_status["sTherUIS"].get("LockKey", 0) == 1
-            if "sTherUIS" in device_status
-            else None
-        ),
+        locked=_thermostat_locked(device_status, th),
         supported_features=SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE,
     )
 
@@ -260,11 +271,7 @@ def _parse_trv_climate_device(
         preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
         fan_mode=None,
         fan_modes=None,
-        locked=(
-            device_status["sTherUIS"].get("LockKey", 0) == 1
-            if "sTherUIS" in device_status
-            else None
-        ),
+        locked=_thermostat_locked(device_status),
         supported_features=SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE,
         extra_state_attributes=trv_attrs or None,
     )

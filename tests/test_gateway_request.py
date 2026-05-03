@@ -433,6 +433,19 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetLockKey": 1}, request["id"][0]["sTherUIS"])
 
+    async def test_set_sq610_climate_device_locked_writes_it600th_lock_key(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = make_climate_device(
+            "sq610-1"
+        )._replace(model="SQ610NH")
+
+        await gateway.set_climate_device_locked("sq610-1", True)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetLockKey": 1}, request["id"][0]["sIT600TH"])
+        self.assertNotIn("sTherUIS", request["id"][0])
+
     async def test_set_fc600nh_climate_mode_uses_fan_coil_path(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
