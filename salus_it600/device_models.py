@@ -60,7 +60,8 @@ Devices are classified by protocol signature in gateway payloads:
 - **Binary sensor**: Contains `sIASZS` alarm/contact data, or is MINITRV/Receiver
 - **Sensor**: Contains `sTempS` with `MeasuredValue_x100` temperature
 - **Switch**: Contains `sOnOffS` with `OnOff` relay state
-- **Cover**: Contains `sLevelS` with `CurrentLevel` position data
+- **Cover**: Contains `sLevelS` with `CurrentLevel` position data for shutter
+  devices such as RS600
 - **Gateway**: Root gateway device with `sGateway` MAC address
 """
 
@@ -104,7 +105,6 @@ BINARY_SENSOR_DEVICE_CLASSES = {
 OUTLET_MODELS = {MODEL_SP600, MODEL_SPE600}
 COVER_DEVICE_CLASSES = {
     MODEL_RS600: "shutter",
-    MODEL_SR600: "shutter",
 }
 SKIPPED_BINARY_SENSOR_MODELS = {MODEL_BUTTON}
 BATTERY_OEM_MODELS = frozenset(

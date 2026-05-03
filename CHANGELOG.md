@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.8 - 2026-05-03
+
+Device support:
+
+- Treat SR600 as a dry relay switch instead of a cover device.
+- Keep RS600 cover payloads as covers while preserving separate RS600 relay
+  endpoints as switches when the gateway exposes them.
+- Allow SR600 relay payloads that also include level data to parse as switches
+  rather than being skipped as cover-like payloads.
+
 ## 0.4.7 - 2026-05-03
 
 Device support:
