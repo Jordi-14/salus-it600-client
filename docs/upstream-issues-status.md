@@ -25,7 +25,7 @@ Last reviewed: 2026-05-02.
 | [#47 UG800 stopped working after firmware update](https://github.com/epoplavskis/pyit600/issues/47) | closed | Closed upstream | Duplicate or abandoned report. |
 | [#46 Compatibility with UG800](https://github.com/epoplavskis/pyit600/issues/46) | open | Needs verification | Current client has newer protocol support, but this report needs real UG800 firmware validation. |
 | [#45 Is a gateway required?](https://github.com/epoplavskis/pyit600/issues/45) | open | Not actionable | General product/architecture question. |
-| [#44 Problem with Salus FC600NH](https://github.com/epoplavskis/pyit600/issues/44) | open | Backlog | FC600NH setpoint write rejection; separate from FC600 fan mode. Told user to try our fork and tell us if it works there. |
+| [#44 Problem with Salus FC600NH](https://github.com/epoplavskis/pyit600/issues/44) | open | Solved locally | FC600NH setpoint write rejection; separate from FC600 fan mode. Told user to try our fork and tell us if it works there. |
 | [#43 Smoke sensors are not seen as binary_sensors](https://github.com/epoplavskis/pyit600/issues/43) | open | Needs verification | Current parser handles `sIASZS` binary devices, but this exact smoke report needs retesting. Told the user to test our fork and make a PR there. |
 | [#41 Debugging gateway communication error](https://github.com/epoplavskis/pyit600/issues/41) | open | Backlog | Gateway read/connect failure. |
 | [#40 Can KL08RF output be controlled?](https://github.com/epoplavskis/pyit600/issues/40) | open | Backlog | Command support not implemented. |
