@@ -16,6 +16,8 @@ from salus_it600.const import (
 )
 from salus_it600.exceptions import IT600CommandError
 from salus_it600.gateway import IT600Gateway
+from salus_it600.parsers.cover import parse_cover_device
+from salus_it600.parsers.switch import parse_switch_device
 
 
 def make_gateway_with_response(response: dict) -> IT600Gateway:
@@ -226,6 +228,30 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         await gateway._refresh_cover_devices([{"data": {"UniID": "cover_1"}}])
 
         self.assertEqual({}, gateway.get_cover_devices())
+
+    def test_sr600_payload_with_level_is_switch_not_cover(self):
+        payload = {
+            **common_detail("relay_1", "SR600"),
+            "sOnOffS": {"OnOff": 1},
+            "sLevelS": {"CurrentLevel": 100, "MoveToLevel_f": "64FFFF"},
+        }
+
+        switch = parse_switch_device(payload)
+
+        self.assertIsNotNone(switch)
+        self.assertEqual("relay_1_1", switch.unique_id)
+        self.assertEqual("switch", switch.device_class)
+        self.assertIsNone(parse_cover_device(payload))
+
+    def test_rs600_payload_with_level_remains_cover_only(self):
+        payload = {
+            **common_detail("cover_1", "RS600"),
+            "sOnOffS": {"OnOff": 1},
+            "sLevelS": {"CurrentLevel": 25, "MoveToLevel_f": "50FFFF"},
+        }
+
+        self.assertIsNone(parse_switch_device(payload))
+        self.assertIsNotNone(parse_cover_device(payload))
 
     async def test_binary_relay_model_uses_relay_status(self):
         gateway = make_gateway_with_response(

@@ -4,25 +4,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..device_models import model_identifier, switch_device_class
+from ..device_models import MODEL_SR600, model_identifier, switch_device_class
 from ..models import SensorDevice, SwitchDevice
 from .common import _common_device_args
+
+
+def _is_cover_payload_for_switch_parser(device_status: dict[str, Any]) -> bool:
+    """Return whether a payload should stay cover-only in switch parsing."""
+    return (
+        device_status.get("sLevelS") is not None
+        and model_identifier(device_status) != MODEL_SR600
+    )
 
 
 def parse_switch_device(device_status: dict[str, Any]) -> SwitchDevice | None:
     """Parse one switch (relay) device from gateway payload."""
     base_unique_id = device_status.get("data", {}).get("UniID")
-    if base_unique_id is None:
+    endpoint = device_status.get("data", {}).get("Endpoint")
+    if base_unique_id is None or endpoint is None:
         return None
 
-    unique_id = f"{base_unique_id}_{device_status['data']['Endpoint']}"
-    if device_status.get("sLevelS") is not None:
+    if _is_cover_payload_for_switch_parser(device_status):
         return None
 
     is_on = device_status.get("sOnOffS", {}).get("OnOff")
     if is_on is None:
         return None
 
+    unique_id = f"{base_unique_id}_{endpoint}"
     model = model_identifier(device_status)
     return SwitchDevice(
         **_common_device_args(device_status, unique_id),
@@ -38,7 +47,7 @@ def parse_switch_sensor_devices(device_status: dict[str, Any]) -> list[SensorDev
     if base_unique_id is None or endpoint is None:
         return []
 
-    if device_status.get("sLevelS") is not None:
+    if _is_cover_payload_for_switch_parser(device_status):
         return []
 
     unique_id = f"{base_unique_id}_{endpoint}"
