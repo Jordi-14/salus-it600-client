@@ -39,7 +39,7 @@ Last reviewed: 2026-05-02.
 | [#31 Salus SQ610(WB) SmartThings device handler](https://github.com/epoplavskis/pyit600/issues/31) | closed | Not actionable | SmartThings request, outside this client scope. |
 | [#30 Integration of pyit600 to fhem is also available](https://github.com/epoplavskis/pyit600/issues/30) | closed | Not actionable | Integration announcement. |
 | [#28 Support for AWRT10RT thermostat, wiring center](https://github.com/epoplavskis/pyit600/issues/28) | open | Backlog | Device support request. |
-| [#27 Support for ECM600](https://github.com/epoplavskis/pyit600/issues/27) | open | Backlog | Electric monitor support request. |
+| [#27 Support for ECM600](https://github.com/epoplavskis/pyit600/issues/27) | open | Backlog | Electric monitor support request. Told the user to test our fork. |
 | [#26 SQ610 works!](https://github.com/epoplavskis/pyit600/issues/26) | closed | Closed upstream | Positive report/historical reference. |
 | [#25 EUID seems invalid](https://github.com/epoplavskis/pyit600/issues/25) | closed | Closed upstream | Historical EUID troubleshooting. |
 | [#21 Upstreaming into HA](https://github.com/epoplavskis/pyit600/issues/21) | closed | Not actionable | Historical project direction. |
