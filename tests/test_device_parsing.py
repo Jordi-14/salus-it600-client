@@ -612,7 +612,7 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(HVAC_MODE_HEAT, device.hvac_mode)
         self.assertEqual(CURRENT_HVAC_HEAT, device.hvac_action)
         self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
-        self.assertEqual(["off", "heat", "auto"], device.hvac_modes)
+        self.assertEqual(("off", "heat", "auto"), device.hvac_modes)
         self.assertEqual({"valve_opening": 45}, device.extra_state_attributes)
         battery = gateway.get_sensor_device("trv_1_battery")
         problem = gateway.get_binary_sensor_device("trv_1_problem")

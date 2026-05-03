@@ -120,13 +120,13 @@ def _parse_it600th_climate_device(
         else CURRENT_HVAC_IDLE
         if running_state % 2 == 0
         else CURRENT_HVAC_HEAT,
-        hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+        hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO),
         preset_mode=PRESET_OFF
         if hold_type == HoldType.STANDBY
         else PRESET_PERMANENT_HOLD
         if hold_type == HoldType.PERMANENT_HOLD
         else PRESET_FOLLOW_SCHEDULE,
-        preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
+        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status, th),
@@ -186,7 +186,7 @@ def _parse_fan_coil_climate_device(
         else CURRENT_HVAC_COOL
         if running_state == RunningState.FAN_COIL_COOLING
         else CURRENT_HVAC_COOL_IDLE,
-        hvac_modes=[HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO],
+        hvac_modes=(HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO),
         preset_mode=PRESET_OFF
         if hold_type == HoldType.STANDBY
         else PRESET_PERMANENT_HOLD
@@ -196,13 +196,13 @@ def _parse_fan_coil_climate_device(
         else PRESET_TEMPORARY_HOLD
         if hold_type == HoldType.TEMPORARY_HOLD
         else PRESET_FOLLOW_SCHEDULE,
-        preset_modes=[
+        preset_modes=(
             PRESET_OFF,
             PRESET_PERMANENT_HOLD,
             PRESET_ECO,
             PRESET_TEMPORARY_HOLD,
             PRESET_FOLLOW_SCHEDULE,
-        ],
+        ),
         fan_mode=FAN_MODE_OFF
         if fan_mode == FanMode.OFF
         else FAN_MODE_HIGH
@@ -212,13 +212,13 @@ def _parse_fan_coil_climate_device(
         else FAN_MODE_LOW
         if fan_mode == FanMode.LOW
         else FAN_MODE_AUTO,
-        fan_modes=[
+        fan_modes=(
             FAN_MODE_AUTO,
             FAN_MODE_HIGH,
             FAN_MODE_MEDIUM,
             FAN_MODE_LOW,
             FAN_MODE_OFF,
-        ],
+        ),
         locked=device_status.get("sTherUIS", {}).get("LockKey", 0) == 1,
         supported_features=(
             SUPPORT_TARGET_TEMPERATURE | SUPPORT_PRESET_MODE | SUPPORT_FAN_MODE
@@ -262,13 +262,13 @@ def _parse_trv_climate_device(
         else CURRENT_HVAC_IDLE
         if running_state == RunningState.IDLE
         else CURRENT_HVAC_HEAT,
-        hvac_modes=[HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO],
+        hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO),
         preset_mode=PRESET_OFF
         if hold_type == HoldType.STANDBY
         else PRESET_PERMANENT_HOLD
         if hold_type == HoldType.PERMANENT_HOLD
         else PRESET_FOLLOW_SCHEDULE,
-        preset_modes=[PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
+        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status),
