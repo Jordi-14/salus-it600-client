@@ -37,6 +37,8 @@ dev = [
   "coverage[toml]",
   "mypy",
   "pre-commit",
+  "pytest",
+  "pytest-asyncio",
   "ruff",
   "twine"
 ]

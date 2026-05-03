@@ -8,7 +8,7 @@ An asynchronous Python client for **local** control and monitoring of [Salus iT6
 
 | Device family | Capabilities |
 |---|---|
-| **iT600 / SQ610** | Heat/off/auto modes, Follow Schedule / Permanent Hold / Off presets, humidity (SQ610), floor temperature (external probe), battery level, 0.5 °C increments |
+| **iT600 / SQ610** | Heat/off/auto modes, Follow Schedule / Permanent Hold / Off presets, humidity (SQ610), floor temperature (external probe), battery level, 0.1 °C precision |
 | **FC600 fan-coil** | Heat/cool/auto modes, five presets, fan modes (auto/high/medium/low/off), separate heating/cooling setpoints |
 | **TRV3RF** | Heat/off/auto modes, valve opening %, battery (voltage curve), open-window detection, error code diagnostics |
 
@@ -20,8 +20,8 @@ An asynchronous Python client for **local** control and monitoring of [Salus iT6
 | Humidity | SQ610 (`SunnySetpoint_x100`) and standalone multi-sensors |
 | Floor temperature | SQ610 with external floor probe (`OUTSensorProbe`) |
 | Battery | Status_d (SQ610RF) and voltage curves (TRV, window/door sensors) |
-| Power (W) | Smart plug instantaneous demand (`sMeteringS`) |
-| Energy (kWh) | Smart plug cumulative consumption (`sMeteringS`) |
+| Power (W) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
+| Energy (kWh) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
 
 ### Binary sensors
 
@@ -90,7 +90,7 @@ Rejected attempts are identified by a characteristic 33-byte reject frame (trail
 
 ## Supported devices
 
-SQ610RF, SQ610RF(WB), SQ610RFNH, SQ610RFNH(WB), FC600, TRV3RF, it600MINITRV, it600Receiver, SP600, SPE600, SR600, RS600, SW600, OS600, WLS600, SmokeSensor-EM, SD600, TS600, RE600, RE10B, PS600.
+SQ610RF, SQ610RF(WB), SQ610RFNH, SQ610RFNH(WB), FC600, TRV3RF, it600MINITRV, it600Receiver, SP600, SPE600, SR600, RS600, SW600, OS600, WLS600, SmokeSensor-EM, SD600, TS600, RE600, RE10B, PS600, ECM600.
 
 ### Unsupported
 
