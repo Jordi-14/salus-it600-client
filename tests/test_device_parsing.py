@@ -336,8 +336,12 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                         "sIT600TH": {
                             "LocalTemperature_x100": 2015,
                             "HeatingSetpoint_x100": 2100,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 3500,
                             "HoldType": 7,
                             "RunningState": 0,
+                            "HeatingControl": 1,
+                            "LockKey": 1,
                         },
                     }
                 ],
@@ -352,6 +356,33 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(CURRENT_HVAC_OFF, device.hvac_action)
         self.assertEqual(PRESET_OFF, device.preset_mode)
         self.assertIsNone(device.current_humidity)
+        self.assertTrue(device.locked)
+        self.assertEqual(int(HoldType.STANDBY), device.hold_type)
+        self.assertIsNone(device.system_mode)
+        self.assertEqual(int(RunningState.IDLE), device.running_state)
+        self.assertEqual(21.0, device.heating_setpoint)
+        self.assertIsNone(device.cooling_setpoint)
+        self.assertEqual(5.0, device.min_heat_temp)
+        self.assertEqual(35.0, device.max_heat_temp)
+        self.assertIsNone(device.min_cool_temp)
+        self.assertIsNone(device.max_cool_temp)
+        self.assertEqual(1, device.heating_control)
+        self.assertIsNone(device.cooling_control)
+        self.assertFalse(device.supports_cooling)
+        self.assertFalse(device.supports_fan)
+        self.assertTrue(device.supports_heat)
+        self.assertEqual(1, device.online_status)
+        self.assertEqual("none", device.cooling_capability_source)
+        self.assertEqual(
+            {
+                "RunningState": int(RunningState.IDLE),
+                "HoldType": int(HoldType.STANDBY),
+                "LockKey": 1,
+                "HeatingControl": 1,
+                "OnlineStatus_i": 1,
+            },
+            device.diagnostic_fields,
+        )
 
     async def test_sq610_humidity_accepts_raw_percent_field(self):
         gateway = make_gateway_with_response(
@@ -640,9 +671,13 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                             "LocalTemperature_x100": 2420,
                             "HeatingSetpoint_x100": 2100,
                             "CoolingSetpoint_x100": 2300,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 4000,
                             "MinCoolSetpoint_x100": 1600,
                             "MaxCoolSetpoint_x100": 3200,
                             "RunningState": 66,
+                            "HeatingControl": 1,
+                            "CoolingControl": 1,
                         },
                         "sComm": {"HoldType": 10},
                         "sFanS": {"FanMode": 3},
@@ -664,6 +699,34 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(16.0, device.min_temp)
         self.assertEqual(32.0, device.max_temp)
         self.assertTrue(device.locked)
+        self.assertEqual(int(HoldType.ECO), device.hold_type)
+        self.assertEqual(int(SystemMode.COOL), device.system_mode)
+        self.assertEqual(int(RunningState.FAN_COIL_COOLING), device.running_state)
+        self.assertEqual(21.0, device.heating_setpoint)
+        self.assertEqual(23.0, device.cooling_setpoint)
+        self.assertEqual(5.0, device.min_heat_temp)
+        self.assertEqual(40.0, device.max_heat_temp)
+        self.assertEqual(16.0, device.min_cool_temp)
+        self.assertEqual(32.0, device.max_cool_temp)
+        self.assertEqual(1, device.heating_control)
+        self.assertEqual(1, device.cooling_control)
+        self.assertTrue(device.supports_cooling)
+        self.assertTrue(device.supports_fan)
+        self.assertTrue(device.supports_heat)
+        self.assertEqual(1, device.online_status)
+        self.assertEqual("known_model", device.cooling_capability_source)
+        self.assertEqual(
+            {
+                "SystemMode": int(SystemMode.COOL),
+                "RunningState": int(RunningState.FAN_COIL_COOLING),
+                "HoldType": int(HoldType.ECO),
+                "LockKey": 1,
+                "HeatingControl": 1,
+                "CoolingControl": 1,
+                "OnlineStatus_i": 1,
+            },
+            device.diagnostic_fields,
+        )
 
     async def test_fc600nh_variant_parsed_as_fan_coil(self):
         gateway = make_gateway_with_response(
@@ -694,6 +757,11 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(CURRENT_HVAC_HEAT, device.hvac_action)
         self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
         self.assertEqual("FC600NH", device.model)
+        self.assertEqual(21.0, device.target_temperature)
+        self.assertEqual(int(SystemMode.HEAT), device.system_mode)
+        self.assertTrue(device.supports_cooling)
+        self.assertTrue(device.supports_fan)
+        self.assertEqual("known_model", device.cooling_capability_source)
 
     async def test_trv3rf_climate_and_diagnostics(self):
         gateway = make_gateway_with_response(
@@ -708,6 +776,7 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                             "MinHeatSetpoint_x100": 500,
                             "MaxHeatSetpoint_x100": 3500,
                             "RunningState": 1,
+                            "HeatingControl": 1,
                         },
                         "sComm": {
                             "HoldType": 2,
@@ -730,6 +799,31 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
         self.assertEqual(("off", "heat", "auto"), device.hvac_modes)
         self.assertEqual({"valve_opening": 45}, device.extra_state_attributes)
+        self.assertEqual(int(HoldType.PERMANENT_HOLD), device.hold_type)
+        self.assertIsNone(device.system_mode)
+        self.assertEqual(int(RunningState.HEATING), device.running_state)
+        self.assertEqual(21.0, device.heating_setpoint)
+        self.assertIsNone(device.cooling_setpoint)
+        self.assertEqual(5.0, device.min_heat_temp)
+        self.assertEqual(35.0, device.max_heat_temp)
+        self.assertIsNone(device.min_cool_temp)
+        self.assertIsNone(device.max_cool_temp)
+        self.assertEqual(1, device.heating_control)
+        self.assertIsNone(device.cooling_control)
+        self.assertFalse(device.supports_cooling)
+        self.assertFalse(device.supports_fan)
+        self.assertTrue(device.supports_heat)
+        self.assertEqual(1, device.online_status)
+        self.assertEqual("none", device.cooling_capability_source)
+        self.assertEqual(
+            {
+                "RunningState": int(RunningState.HEATING),
+                "HoldType": int(HoldType.PERMANENT_HOLD),
+                "HeatingControl": 1,
+                "OnlineStatus_i": 1,
+            },
+            device.diagnostic_fields,
+        )
         battery = gateway.get_sensor_device("trv_1_battery")
         problem = gateway.get_binary_sensor_device("trv_1_problem")
         open_window = gateway.get_binary_sensor_device("trv_1_open_window")
