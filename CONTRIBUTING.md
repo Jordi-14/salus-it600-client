@@ -57,8 +57,8 @@ Run these before opening a pull request:
 ```bash
 python3 -m ruff check salus_it600 tests main.py
 python3 -m mypy
-python3 -m unittest discover -q
-python3 -m coverage run -m unittest
+python3 -m pytest -q
+python3 -m coverage run -m pytest
 python3 -m coverage report
 python3 -m compileall -q salus_it600 tests main.py
 python3 -m build
