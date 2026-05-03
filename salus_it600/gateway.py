@@ -38,6 +38,7 @@ from .parsers import (
     parse_climate_device,
     parse_climate_sensor_devices,
     parse_cover_device,
+    parse_meter_sensor_devices,
     parse_sensor_devices,
     parse_switch_sensor_devices,
     parse_switch_device,
@@ -53,8 +54,8 @@ from .protocol import GatewayProtocol, parse_frame_33
 from .protocol_aes_cbc import AesCbcProtocol
 from .protocol_aes_ccm import AesCcmProtocol
 from .device_models import (
-    MODEL_FC600,
     is_binary_sensor_summary,
+    is_fan_coil_model,
     is_sq610_model,
     is_trv_model,
 )
@@ -347,6 +348,7 @@ class IT600Gateway:
         self._sensor_devices: dict[str, SensorDevice] = {}
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
+        self._meter_sensor_devices: dict[str, SensorDevice] = {}
         self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
@@ -509,6 +511,14 @@ class IT600Gateway:
 
         covers = list(filter(lambda x: "sLevelS" in x, device_items))
         await self._refresh_cover_devices(covers, send_callback)
+
+        meters = list(
+            filter(
+                lambda x: "sMeterS" in x and "sOnOffS" not in x,
+                device_items,
+            )
+        )
+        await self._refresh_meter_devices(meters, send_callback)
 
     async def _refresh_device_collection(
         self,
@@ -728,6 +738,39 @@ class IT600Gateway:
 
         self._sensor_devices = local_devices
         _LOGGER.debug("Refreshed %s sensor devices", len(local_devices))
+
+    async def _refresh_meter_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
+        sensor_devices: dict[str, SensorDevice] = {}
+
+        if devices:
+            request_items = _device_status_request_items(devices, "meter")
+            if request_items:
+                status = await self._make_encrypted_request(
+                    "read", {"requestAttr": "deviceid", "id": request_items}
+                )
+
+                for device_status in _response_items(status, "meter device detail"):
+                    unique_id = device_status.get("data", {}).get("UniID")
+                    try:
+                        sensors = parse_meter_sensor_devices(device_status)
+                    except PARSING_EXCEPTIONS:
+                        _LOGGER.exception(
+                            "Failed to parse meter device %s", unique_id
+                        )
+                        continue
+
+                    for sensor in sensors:
+                        sensor_devices[sensor.unique_id] = sensor
+                        if send_callback:
+                            self._meter_sensor_devices[sensor.unique_id] = sensor
+                            await self._send_sensor_update_callback(sensor.unique_id)
+
+        self._meter_sensor_devices = sensor_devices
+        _LOGGER.debug("Refreshed %s meter sensor devices", len(sensor_devices))
 
     async def _refresh_binary_sensor_devices(
         self,
@@ -961,6 +1004,7 @@ class IT600Gateway:
             **self._sensor_devices,
             **self._climate_sensor_devices,
             **self._switch_sensor_devices,
+            **self._meter_sensor_devices,
         }
 
     def get_sensor_device(self, device_id: str) -> SensorDevice | None:
@@ -971,6 +1015,7 @@ class IT600Gateway:
             self._sensor_devices.get(device_id)
             or self._climate_sensor_devices.get(device_id)
             or self._switch_sensor_devices.get(device_id)
+            or self._meter_sensor_devices.get(device_id)
         )
 
     async def fetch_sq610_properties(
@@ -1190,7 +1235,7 @@ class IT600Gateway:
         preset = _validate_supported_value(preset, "preset", device.preset_modes)
         request_data: dict[str, dict[str, int]]
 
-        if device.model == MODEL_FC600:
+        if is_fan_coil_model(device.model):
             request_data = {
                 "sComm": {
                     "SetHoldType": HoldType.STANDBY
@@ -1245,7 +1290,7 @@ class IT600Gateway:
         mode = _validate_supported_value(mode, "mode", device.hvac_modes)
         request_data: dict[str, dict[str, int]]
 
-        if device.model == MODEL_FC600:
+        if is_fan_coil_model(device.model):
             request_data = {
                 "sTherS": {
                     "SetSystemMode": SystemMode.HEAT
@@ -1360,7 +1405,7 @@ class IT600Gateway:
         rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
         request_data: dict[str, dict[str, int]]
 
-        if device.model == MODEL_FC600:
+        if is_fan_coil_model(device.model):
             if device.hvac_mode == HVAC_MODE_COOL:
                 request_data = {"sTherS": {"SetCoolingSetpoint_x100": rounded_setpoint}}
             else:

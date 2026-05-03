@@ -86,6 +86,7 @@ MODEL_SD600 = "SD600"
 MODEL_TS600 = "TS600"
 MODEL_RE600 = "RE600"
 MODEL_RE10B = "RE10B"
+MODEL_ECM600 = "ECM600"
 MODEL_TRV3RF = "TRV3RF"
 
 SQ610_MODEL_TOKEN = "SQ610"
@@ -122,7 +123,7 @@ DOOR_VOLTAGE_MODELS = frozenset(
         MODEL_SD600,
     }
 )
-ENERGY_METER_VOLTAGE_MODELS = frozenset({MODEL_RE600, MODEL_RE10B})
+ENERGY_METER_VOLTAGE_MODELS = frozenset({MODEL_RE600, MODEL_RE10B, MODEL_ECM600})
 TRV_VOLTAGE_MODELS = frozenset({MODEL_TRV3RF})
 
 SQ610_MODE_AUTO = SystemMode.AUTO
@@ -197,6 +198,9 @@ def is_sq610_model(model: str | None) -> bool:
     return isinstance(model, str) and SQ610_MODEL_TOKEN in model.upper()
 
 
+FC600_MODEL_TOKEN = "FC600"
+
+
 def is_fan_coil_model(model: str | None) -> bool:
     """Return whether a model identifier is an FC600 fan-coil thermostat.
 
@@ -204,13 +208,15 @@ def is_fan_coil_model(model: str | None) -> bool:
     thermostats: they use `sTherS` (with separate cooling setpoint) +
     `sComm` (hold type) + `sFanS` (fan mode) instead of single `sIT600TH`.
 
+    Variants include FC600, FC600NH, etc.
+
     Args:
         model: Model identifier string or None
 
     Returns:
-        True if FC600, False otherwise
+        True if FC600 variant, False otherwise
     """
-    return model == MODEL_FC600
+    return isinstance(model, str) and model.upper().startswith(FC600_MODEL_TOKEN)
 
 
 def is_trv_model(model: str | None) -> bool:
