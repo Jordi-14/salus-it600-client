@@ -45,11 +45,9 @@ Roller shutters and blinds (RS600): open, close, set position (0-100 %).
 
 Smart plugs and relays (SP600, SPE600, SR600, and RS600 relay endpoints): on/off control. Dual-endpoint devices exposed as separate entities.
 
-### RS600 / SR600 notes
+### RS600 notes
 
 RS600 is a multifunction physical device. Depending on gateway payloads and installation mode, it can expose a cover surface through `sLevelS` and separate relay switch endpoints through `sOnOffS`. The client keeps these capabilities separate so Home Assistant can decide how to present them.
-
-SR600 is treated as a dry relay switch, not as a cover device. If an SR600 relay payload includes both `sOnOffS` and `sLevelS`, the relay state is still parsed as a switch and the payload is not exposed as a cover.
 
 ## Installation
 
