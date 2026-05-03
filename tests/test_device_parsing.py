@@ -478,6 +478,36 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(32.0, device.max_temp)
         self.assertTrue(device.locked)
 
+    async def test_fc600nh_variant_parsed_as_fan_coil(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("fan_nh", "FC600NH"),
+                        "sTherS": {
+                            "SystemMode": 4,
+                            "LocalTemperature_x100": 2250,
+                            "HeatingSetpoint_x100": 2100,
+                            "CoolingSetpoint_x100": 2400,
+                            "RunningState": 33,
+                        },
+                        "sComm": {"HoldType": 2},
+                        "sFanS": {"FanMode": 5},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "fan_nh"}}])
+
+        device = gateway.get_climate_device("fan_nh")
+        self.assertIsNotNone(device)
+        self.assertEqual(HVAC_MODE_HEAT, device.hvac_mode)
+        self.assertEqual(CURRENT_HVAC_HEAT, device.hvac_action)
+        self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
+        self.assertEqual("FC600NH", device.model)
+
     async def test_trv3rf_climate_and_diagnostics(self):
         gateway = make_gateway_with_response(
             {
@@ -526,6 +556,81 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNotNone(open_window)
         self.assertTrue(open_window.is_on)
+
+    async def test_ecm600_meter_sensors_parsed(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        "data": {"UniID": "ecm_1", "Endpoint": 1},
+                        "sZDO": {
+                            "DeviceName": '{"deviceName": "Clamp Meter"}',
+                        },
+                        "sZDOInfo": {"OnlineStatus_i": 1},
+                        "sBasicS": {"ManufactureName": "SALUS"},
+                        "DeviceL": {"ModelIdentifier_i": "ECM600"},
+                        "sMeterS": {
+                            "Multiplier": 1,
+                            "Divisor": 10000,
+                            "InstantaneousDemand": 3500,
+                            "CurrentSummationDelivered": 1234567,
+                        },
+                        "sPowerS": {"BatteryVoltage_x10": 51},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_meter_devices(
+            [{"data": {"UniID": "ecm_1"}}]
+        )
+
+        power = gateway.get_sensor_device("ecm_1_1_power")
+        self.assertIsNotNone(power)
+        self.assertEqual(0.35, power.state)
+        self.assertEqual("W", power.unit_of_measurement)
+        self.assertEqual("power", power.device_class)
+
+        energy = gateway.get_sensor_device("ecm_1_1_energy")
+        self.assertIsNotNone(energy)
+        self.assertEqual(123.46, energy.state)
+        self.assertEqual("kWh", energy.unit_of_measurement)
+        self.assertEqual("energy", energy.device_class)
+
+        battery = gateway.get_sensor_device("ecm_1_1_battery")
+        self.assertIsNotNone(battery)
+        self.assertEqual(50, battery.state)
+        self.assertEqual("battery", battery.device_class)
+
+    async def test_ecm600_meter_without_readings_returns_battery_only(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        "data": {"UniID": "ecm_2", "Endpoint": 2},
+                        "sZDO": {
+                            "DeviceName": '{"deviceName": "Clamp 2"}',
+                        },
+                        "sZDOInfo": {"OnlineStatus_i": 1},
+                        "sBasicS": {"ManufactureName": "SALUS"},
+                        "DeviceL": {"ModelIdentifier_i": "ECM600"},
+                        "sMeterS": {"Multiplier": 1, "Divisor": 10000},
+                        "sPowerS": {"BatteryVoltage_x10": 51},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_meter_devices(
+            [{"data": {"UniID": "ecm_2"}}]
+        )
+
+        self.assertIsNone(gateway.get_sensor_device("ecm_2_2_power"))
+        self.assertIsNone(gateway.get_sensor_device("ecm_2_2_energy"))
+        battery = gateway.get_sensor_device("ecm_2_2_battery")
+        self.assertIsNotNone(battery)
 
     async def test_parser_errors_are_logged_and_skipped(self):
         gateway = make_gateway_with_response(

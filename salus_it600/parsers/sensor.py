@@ -90,3 +90,85 @@ def parse_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevice]:
             )
 
     return sensors
+
+
+def parse_meter_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevice]:
+    """Parse an energy meter (ECM600) payload into power/energy sensors.
+
+    The ECM600 uses ZCL Metering cluster exposed as ``sMeterS`` with
+    ``Multiplier`` / ``Divisor`` scaling and standard attributes
+    ``InstantaneousDemand`` (W) and ``CurrentSummationDelivered`` (kWh).
+    Each clamp is a separate endpoint.
+    """
+    base_unique_id = device_status.get("data", {}).get("UniID")
+    endpoint = device_status.get("data", {}).get("Endpoint")
+    if base_unique_id is None or endpoint is None:
+        return []
+
+    unique_id = f"{base_unique_id}_{endpoint}"
+    metering = device_status.get("sMeterS")
+    if not isinstance(metering, dict):
+        return []
+
+    multiplier = metering.get("Multiplier", 1)
+    divisor = metering.get("Divisor", 1)
+    scale = multiplier / divisor if divisor else 1
+
+    model = model_identifier(device_status)
+    parent_name = _device_name(device_status, base_unique_id)
+    parent = _common_device_args(device_status, unique_id)
+    sensors: list[SensorDevice] = []
+
+    power_raw = metering.get("InstantaneousDemand")
+    if power_raw is not None:
+        sensors.append(
+            SensorDevice(
+                **{
+                    **parent,
+                    "name": f"{parent_name} Power",
+                    "unique_id": f"{unique_id}_power",
+                },
+                state=round(power_raw * scale, 2),
+                unit_of_measurement="W",
+                device_class="power",
+                parent_unique_id=unique_id,
+            )
+        )
+
+    energy_raw = metering.get("CurrentSummationDelivered")
+    if energy_raw is not None:
+        sensors.append(
+            SensorDevice(
+                **{
+                    **parent,
+                    "name": f"{parent_name} Energy",
+                    "unique_id": f"{unique_id}_energy",
+                },
+                state=round(energy_raw * scale, 2),
+                unit_of_measurement="kWh",
+                device_class="energy",
+                parent_unique_id=unique_id,
+            )
+        )
+
+    # Battery from sPowerS (ECM600 is battery-powered with mains backup)
+    voltage_raw = device_status.get("sPowerS", {}).get("BatteryVoltage_x10")
+    if voltage_raw is not None:
+        pct = _voltage_to_battery_pct(voltage_raw / 10, model)
+        if pct is not None:
+            sensors.append(
+                SensorDevice(
+                    **{
+                        **parent,
+                        "name": f"{parent_name} Battery",
+                        "unique_id": f"{unique_id}_battery",
+                    },
+                    state=pct,
+                    unit_of_measurement="%",
+                    device_class="battery",
+                    parent_unique_id=unique_id,
+                    entity_category="diagnostic",
+                )
+            )
+
+    return sensors

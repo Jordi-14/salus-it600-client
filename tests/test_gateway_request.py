@@ -433,6 +433,45 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetLockKey": 1}, request["id"][0]["sTherUIS"])
 
+    async def test_set_fc600nh_climate_mode_uses_fan_coil_path(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["fc600nh-1"] = make_climate_device(
+            "fc600nh-1"
+        )._replace(model="FC600NH")
+
+        await gateway.set_climate_device_mode("fc600nh-1", HVAC_MODE_COOL)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetSystemMode": 3}, request["id"][0]["sTherS"])
+
+    async def test_set_fc600nh_preset_uses_fan_coil_path(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["fc600nh-1"] = make_climate_device(
+            "fc600nh-1"
+        )._replace(model="FC600NH")
+
+        await gateway.set_climate_device_preset("fc600nh-1", PRESET_ECO)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 10}, request["id"][0]["sComm"])
+
+    async def test_set_fc600nh_temperature_uses_fan_coil_path(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["fc600nh-1"] = make_climate_device(
+            "fc600nh-1"
+        )._replace(model="FC600NH", hvac_mode=HVAC_MODE_COOL)
+
+        await gateway.set_climate_device_temperature("fc600nh-1", 23.0)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetCoolingSetpoint_x100": 2300},
+            request["id"][0]["sTherS"],
+        )
+
     async def test_set_trv3rf_temperature_writes_sthers_payload(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
