@@ -53,6 +53,8 @@ from ..models import (
     sq610_supports_cooling,
 )
 from .common import (
+    _child_binary_sensor_device,
+    _child_sensor_device,
     _common_device_args,
     _hold_type,
     _humidity_percent,
@@ -590,11 +592,10 @@ def parse_climate_sensor_devices(
 
     if climate_device.current_humidity is not None:
         sensors.append(
-            SensorDevice(
-                **{
-                    **_common_device_args(device_status, f"{unique_id}_humidity"),
-                    "name": f"{climate_device.name} Humidity",
-                },
+            _child_sensor_device(
+                device_status,
+                f"{unique_id}_humidity",
+                f"{climate_device.name} Humidity",
                 state=climate_device.current_humidity,
                 unit_of_measurement="%",
                 device_class="humidity",
@@ -612,13 +613,10 @@ def parse_climate_sensor_devices(
                 floor_temp_raw = 0
             if 0 < floor_temp_raw <= 10000:
                 sensors.append(
-                    SensorDevice(
-                        **{
-                            **_common_device_args(
-                                device_status, f"{unique_id}_floor_temperature"
-                            ),
-                            "name": f"{climate_device.name} Floor temperature",
-                        },
+                    _child_sensor_device(
+                        device_status,
+                        f"{unique_id}_floor_temperature",
+                        f"{climate_device.name} Floor temperature",
                         state=floor_temp_raw / TEMPERATURE_SCALE,
                         unit_of_measurement=TEMP_CELSIUS,
                         device_class="temperature",
@@ -633,13 +631,10 @@ def parse_climate_sensor_devices(
                 raw_battery = -1
             if 0 <= raw_battery <= 5:
                 sensors.append(
-                    SensorDevice(
-                        **{
-                            **_common_device_args(
-                                device_status, f"{unique_id}_battery"
-                            ),
-                            "name": f"{climate_device.name} Battery",
-                        },
+                    _child_sensor_device(
+                        device_status,
+                        f"{unique_id}_battery",
+                        f"{climate_device.name} Battery",
                         state=BATTERY_LEVEL_MAP[raw_battery],
                         unit_of_measurement="%",
                         device_class="battery",
@@ -654,11 +649,10 @@ def parse_climate_sensor_devices(
             pct = _voltage_to_battery_pct(voltage_raw / 10, model)
             if pct is not None:
                 sensors.append(
-                    SensorDevice(
-                        **{
-                            **_common_device_args(device_status, f"{unique_id}_battery"),
-                            "name": f"{climate_device.name} Battery",
-                        },
+                    _child_sensor_device(
+                        device_status,
+                        f"{unique_id}_battery",
+                        f"{climate_device.name} Battery",
                         state=pct,
                         unit_of_measurement="%",
                         device_class="battery",
@@ -697,11 +691,10 @@ def parse_climate_binary_sensor_devices(
             active_battery = []
 
         sensors.append(
-            BinarySensorDevice(
-                **{
-                    **_common_device_args(device_status, f"{unique_id}_problem"),
-                    "name": f"{climate_device.name} Problem",
-                },
+            _child_binary_sensor_device(
+                device_status,
+                f"{unique_id}_problem",
+                f"{climate_device.name} Problem",
                 is_on=bool(active_problems),
                 device_class="problem",
                 parent_unique_id=unique_id,
@@ -712,13 +705,10 @@ def parse_climate_binary_sensor_devices(
 
         if model in BATTERY_OEM_MODELS:
             sensors.append(
-                BinarySensorDevice(
-                    **{
-                        **_common_device_args(
-                            device_status, f"{unique_id}_battery_error"
-                        ),
-                        "name": f"{climate_device.name} Battery problem",
-                    },
+                _child_binary_sensor_device(
+                    device_status,
+                    f"{unique_id}_battery_error",
+                    f"{climate_device.name} Battery problem",
                     is_on=bool(active_battery),
                     device_class="battery",
                     parent_unique_id=unique_id,
@@ -731,11 +721,10 @@ def parse_climate_binary_sensor_devices(
         error_code = scomm.get("DeviceErrorCode", "")
         has_error = bool(error_code and str(error_code).strip("0"))
         sensors.append(
-            BinarySensorDevice(
-                **{
-                    **_common_device_args(device_status, f"{unique_id}_problem"),
-                    "name": f"{climate_device.name} Problem",
-                },
+            _child_binary_sensor_device(
+                device_status,
+                f"{unique_id}_problem",
+                f"{climate_device.name} Problem",
                 is_on=has_error,
                 device_class="problem",
                 parent_unique_id=unique_id,
@@ -747,13 +736,10 @@ def parse_climate_binary_sensor_devices(
         open_window = scomm.get("OpenWindowStatus")
         if open_window is not None:
             sensors.append(
-                BinarySensorDevice(
-                    **{
-                        **_common_device_args(
-                            device_status, f"{unique_id}_open_window"
-                        ),
-                        "name": f"{climate_device.name} Open window",
-                    },
+                _child_binary_sensor_device(
+                    device_status,
+                    f"{unique_id}_open_window",
+                    f"{climate_device.name} Open window",
                     is_on=open_window != 0,
                     device_class="window",
                     parent_unique_id=unique_id,

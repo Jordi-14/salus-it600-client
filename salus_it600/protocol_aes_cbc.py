@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
-import json
-from typing import Any
 
-import aiohttp
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from .protocol import GatewayProtocol, parse_frame_33
+from .protocol import GatewayProtocol
 
 _IV = bytes(
     [
@@ -79,53 +75,3 @@ class AesCbcProtocol(GatewayProtocol):
         if remainder:
             raw = raw[: len(raw) - remainder]
         return self.decrypt(raw)
-
-    async def connect(
-        self,
-        session: aiohttp.ClientSession,
-        host: str,
-        port: int,
-        timeout: int | float,
-    ) -> dict[str, Any]:
-        """Send an encrypted readall and return the parsed response."""
-        url = f"http://{host}:{port}/deviceid/read"
-        encrypted = self.encrypt(json.dumps({"requestAttr": "readall"}))
-
-        async with asyncio.timeout(timeout):
-            resp = await session.post(
-                url,
-                data=encrypted,
-                headers={"content-type": "application/json"},
-            )
-            raw = await resp.read()
-
-        if resp.status != 200:
-            raise ValueError(f"HTTP {resp.status}")
-
-        frame = parse_frame_33(raw)
-        if frame is not None:
-            if frame.is_reject:
-                raise ValueError("Gateway returned a reject frame")
-            raise ValueError("Gateway returned a new-protocol frame")
-
-        try:
-            text = self.unwrap_response(raw)
-        except Exception as exc:
-            raise ValueError(
-                f"Decryption failed ({type(exc).__name__}: {exc})"
-            ) from exc
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Decrypted response is not valid JSON: {exc}") from exc
-
-        if not isinstance(parsed, dict):
-            raise ValueError(
-                f"Decrypted response is not a JSON object: {type(parsed).__name__}"
-            )
-
-        result: dict[str, Any] = parsed
-        if result.get("status") != "success":
-            raise ValueError(f"status={result.get('status')}")
-        return result

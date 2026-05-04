@@ -167,12 +167,14 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         session = FakeSession({"status": "fail", "id": [{"status": "fail"}]})
         gateway = make_gateway(session)
 
-        with self.assertLogs("salus_it600", level="ERROR"):
-            with self.assertRaises(IT600CommandError) as context:
-                await gateway._make_encrypted_request(
-                    "write",
-                    {"requestAttr": "write", "id": []},
-                )
+        with (
+            self.assertLogs("salus_it600", level="ERROR"),
+            self.assertRaises(IT600CommandError) as context,
+        ):
+            await gateway._make_encrypted_request(
+                "write",
+                {"requestAttr": "write", "id": []},
+            )
 
         message = str(context.exception)
         self.assertIn("gateway rejected 'write' command", message)
@@ -183,12 +185,14 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         session = FakeSession(error=asyncio.TimeoutError())
         gateway = make_gateway(session)
 
-        with self.assertLogs("salus_it600", level="ERROR"):
-            with self.assertRaises(IT600ConnectionError) as context:
-                await gateway._make_encrypted_request(
-                    "read",
-                    {"requestAttr": "readall"},
-                )
+        with (
+            self.assertLogs("salus_it600", level="ERROR"),
+            self.assertRaises(IT600ConnectionError) as context,
+        ):
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
 
         self.assertIn("timeout", str(context.exception))
 

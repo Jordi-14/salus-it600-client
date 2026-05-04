@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import dataclasses
+import json
 from typing import Any
 
 import aiohttp
@@ -81,7 +83,6 @@ class GatewayProtocol(abc.ABC):
     def decrypt(self, ciphertext: bytes) -> str:
         """Decrypt wire bytes into a JSON string."""
 
-    @abc.abstractmethod
     async def connect(
         self,
         session: aiohttp.ClientSession,
@@ -90,6 +91,47 @@ class GatewayProtocol(abc.ABC):
         timeout: int | float,
     ) -> dict[str, Any]:
         """Perform a readall request and return the parsed response."""
+        url = f"http://{host}:{port}/deviceid/read"
+        encrypted = self.wrap_request(json.dumps({"requestAttr": "readall"}))
+
+        async with asyncio.timeout(timeout):
+            resp = await session.post(
+                url,
+                data=encrypted,
+                headers={"content-type": "application/json"},
+            )
+            raw = await resp.read()
+
+        if resp.status != 200:
+            raise ValueError(f"HTTP {resp.status}")
+
+        frame = parse_frame_33(raw)
+        if frame is not None:
+            if frame.is_reject:
+                raise ValueError("Gateway returned a reject frame")
+            raise ValueError("Gateway returned a new-protocol frame")
+
+        try:
+            text = self.unwrap_response(raw)
+        except Exception as exc:
+            raise ValueError(
+                f"Decryption failed ({type(exc).__name__}: {exc})"
+            ) from exc
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Decrypted response is not valid JSON: {exc}") from exc
+
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"Decrypted response is not a JSON object: {type(parsed).__name__}"
+            )
+
+        result: dict[str, Any] = parsed
+        if result.get("status") != "success":
+            raise ValueError(f"status={result.get('status')}")
+        return result
 
     @abc.abstractmethod
     def wrap_request(self, body_json: str) -> bytes:
