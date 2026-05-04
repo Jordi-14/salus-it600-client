@@ -7,7 +7,12 @@ from typing import Any
 from ..const import TEMP_CELSIUS, TEMPERATURE_SCALE
 from ..device_models import model_identifier
 from ..models import SensorDevice
-from .common import _common_device_args, _device_name, _voltage_to_battery_pct
+from .common import (
+    _child_sensor_device,
+    _common_device_args,
+    _device_name,
+    _voltage_to_battery_pct,
+)
 
 
 def parse_sensor_device(device_status: dict[str, Any]) -> SensorDevice | None:
@@ -55,13 +60,10 @@ def parse_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevice]:
     )
     if humidity_raw is not None:
         sensors.append(
-            SensorDevice(
-                **{
-                    **_common_device_args(
-                        device_status, f"{base_unique_id}_humidity"
-                    ),
-                    "name": f"{parent_name} Humidity",
-                },
+            _child_sensor_device(
+                device_status,
+                f"{base_unique_id}_humidity",
+                f"{parent_name} Humidity",
                 state=humidity_raw / TEMPERATURE_SCALE,
                 unit_of_measurement="%",
                 device_class="humidity",
@@ -74,13 +76,10 @@ def parse_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevice]:
         pct = _voltage_to_battery_pct(voltage_raw / 10, model)
         if pct is not None:
             sensors.append(
-                SensorDevice(
-                    **{
-                        **_common_device_args(
-                            device_status, f"{base_unique_id}_battery"
-                        ),
-                        "name": f"{parent_name} Battery",
-                    },
+                _child_sensor_device(
+                    device_status,
+                    f"{base_unique_id}_battery",
+                    f"{parent_name} Battery",
                     state=pct,
                     unit_of_measurement="%",
                     device_class="battery",
@@ -116,18 +115,15 @@ def parse_meter_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevi
 
     model = model_identifier(device_status)
     parent_name = _device_name(device_status, base_unique_id)
-    parent = _common_device_args(device_status, unique_id)
     sensors: list[SensorDevice] = []
 
     power_raw = metering.get("InstantaneousDemand")
     if power_raw is not None:
         sensors.append(
-            SensorDevice(
-                **{
-                    **parent,
-                    "name": f"{parent_name} Power",
-                    "unique_id": f"{unique_id}_power",
-                },
+            _child_sensor_device(
+                device_status,
+                f"{unique_id}_power",
+                f"{parent_name} Power",
                 state=round(power_raw * scale, 2),
                 unit_of_measurement="W",
                 device_class="power",
@@ -138,12 +134,10 @@ def parse_meter_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevi
     energy_raw = metering.get("CurrentSummationDelivered")
     if energy_raw is not None:
         sensors.append(
-            SensorDevice(
-                **{
-                    **parent,
-                    "name": f"{parent_name} Energy",
-                    "unique_id": f"{unique_id}_energy",
-                },
+            _child_sensor_device(
+                device_status,
+                f"{unique_id}_energy",
+                f"{parent_name} Energy",
                 state=round(energy_raw * scale, 2),
                 unit_of_measurement="kWh",
                 device_class="energy",
@@ -157,12 +151,10 @@ def parse_meter_sensor_devices(device_status: dict[str, Any]) -> list[SensorDevi
         pct = _voltage_to_battery_pct(voltage_raw / 10, model)
         if pct is not None:
             sensors.append(
-                SensorDevice(
-                    **{
-                        **parent,
-                        "name": f"{parent_name} Battery",
-                        "unique_id": f"{unique_id}_battery",
-                    },
+                _child_sensor_device(
+                    device_status,
+                    f"{unique_id}_battery",
+                    f"{parent_name} Battery",
                     state=pct,
                     unit_of_measurement="%",
                     device_class="battery",

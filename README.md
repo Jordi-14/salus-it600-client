@@ -8,9 +8,15 @@ An asynchronous Python client for **local** control and monitoring of [Salus iT6
 
 | Device family | Capabilities |
 |---|---|
-| **iT600 / SQ610** | Heat/off/auto modes, Follow Schedule / Permanent Hold / Off presets, humidity (SQ610), floor temperature (external probe), battery level, 0.1 °C precision |
-| **FC600 fan-coil** | Heat/cool/auto modes, five presets, fan modes (auto/high/medium/low/off), separate heating/cooling setpoints |
+| **Standard heat-only iT600 / TRV devices** | Heat/off/auto control model, active target temperature, battery level, 0.1 °C precision |
+| **SQ610 / SQ610RF Quantum** | Off/heat modes, cool mode when the thermostat reports cooling support, Permanent Hold / Follow Schedule presets, normalized humidity, floor temperature (external probe), battery level, 0.1 °C precision |
+| **FC600 fan-coil** | Off/heat/cool modes, Follow Schedule / Permanent Hold / Eco presets when supported, fan modes (auto/high/medium/low/off), separate heating/cooling setpoints |
 | **TRV3RF** | Heat/off/auto modes, valve opening %, battery (voltage curve), open-window detection, error code diagnostics |
+
+All thermostat families expose the same normalized climate model where their
+protocols overlap: hold/system/running state, active target temperature, active
+range, heat/cool setpoints when present, online status, and whitelisted support
+fields for diagnostics.
 
 ### Sensors
 

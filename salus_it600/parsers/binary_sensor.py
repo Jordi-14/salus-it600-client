@@ -11,7 +11,7 @@ from ..device_models import (
     model_identifier,
 )
 from ..models import BinarySensorDevice
-from .common import _common_device_args, _device_name
+from .common import _child_binary_sensor_device, _common_device_args, _device_name
 
 
 def parse_binary_sensor_device(
@@ -61,11 +61,10 @@ def parse_binary_diagnostic_devices(
         return []
 
     return [
-        BinarySensorDevice(
-            **{
-                **_common_device_args(device_status, f"{unique_id}_low_battery"),
-                "name": f"{parent_name} Low battery",
-            },
+        _child_binary_sensor_device(
+            device_status,
+            f"{unique_id}_low_battery",
+            f"{parent_name} Low battery",
             is_on=low_battery == 1,
             device_class="battery",
             parent_unique_id=unique_id,

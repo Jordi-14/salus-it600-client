@@ -15,6 +15,9 @@ from salus_it600.const import (
     HVAC_MODE_HEAT,
     PRESET_ECO,
     PRESET_PERMANENT_HOLD,
+    HoldType,
+    RunningState,
+    SystemMode,
 )
 from salus_it600.parsers import (
     parse_binary_diagnostic_devices,
@@ -127,6 +130,16 @@ class TestPayloadFixtures(unittest.TestCase):
         self.assertEqual(FAN_MODE_HIGH, device.fan_mode)
         self.assertEqual(23.0, device.target_temperature)
         self.assertTrue(device.locked)
+        self.assertEqual(int(HoldType.ECO), device.hold_type)
+        self.assertEqual(int(SystemMode.COOL), device.system_mode)
+        self.assertEqual(int(RunningState.FAN_COIL_COOLING), device.running_state)
+        self.assertEqual(21.0, device.heating_setpoint)
+        self.assertEqual(23.0, device.cooling_setpoint)
+        self.assertEqual(16.0, device.min_cool_temp)
+        self.assertEqual(32.0, device.max_cool_temp)
+        self.assertTrue(device.supports_cooling)
+        self.assertTrue(device.supports_fan)
+        self.assertEqual("known_model", device.cooling_capability_source)
 
     def test_trv3rf_climate_fixture(self) -> None:
         payload = _fixture("climate_trv3rf.json")
@@ -146,6 +159,15 @@ class TestPayloadFixtures(unittest.TestCase):
         self.assertEqual(CURRENT_HVAC_HEAT, device.hvac_action)
         self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
         self.assertEqual({"valve_opening": 45}, device.extra_state_attributes)
+        self.assertEqual(int(HoldType.PERMANENT_HOLD), device.hold_type)
+        self.assertIsNone(device.system_mode)
+        self.assertEqual(int(RunningState.HEATING), device.running_state)
+        self.assertEqual(21.0, device.heating_setpoint)
+        self.assertEqual(5.0, device.min_heat_temp)
+        self.assertEqual(35.0, device.max_heat_temp)
+        self.assertFalse(device.supports_cooling)
+        self.assertFalse(device.supports_fan)
+        self.assertEqual("none", device.cooling_capability_source)
         self.assertEqual(100, sensors["trv_1_battery"].state)
         self.assertTrue(binary_sensors["trv_1_problem"].is_on)
         self.assertTrue(binary_sensors["trv_1_open_window"].is_on)

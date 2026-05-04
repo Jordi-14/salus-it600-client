@@ -19,6 +19,7 @@ from ..device_models import (
     WINDOW_VOLTAGE_MODELS,
     model_identifier,
 )
+from ..models import BinarySensorDevice, SensorDevice
 
 _LOGGER = logging.getLogger("salus_it600")
 
@@ -149,3 +150,47 @@ def _common_device_args(
         "model": model,
         "sw_version": _firmware_version(device_status),
     }
+
+
+def _child_sensor_device(
+    device_status: dict[str, Any],
+    unique_id: str,
+    name: str,
+    *,
+    state: Any,
+    unit_of_measurement: str,
+    device_class: str,
+    parent_unique_id: str,
+    entity_category: str | None = None,
+) -> SensorDevice:
+    """Return a child sensor using shared parent device metadata."""
+    return SensorDevice(
+        **{**_common_device_args(device_status, unique_id), "name": name},
+        state=state,
+        unit_of_measurement=unit_of_measurement,
+        device_class=device_class,
+        parent_unique_id=parent_unique_id,
+        entity_category=entity_category,
+    )
+
+
+def _child_binary_sensor_device(
+    device_status: dict[str, Any],
+    unique_id: str,
+    name: str,
+    *,
+    is_on: bool,
+    device_class: str,
+    parent_unique_id: str,
+    entity_category: str | None = None,
+    extra_state_attributes: dict[str, Any] | None = None,
+) -> BinarySensorDevice:
+    """Return a child binary sensor using shared parent device metadata."""
+    return BinarySensorDevice(
+        **{**_common_device_args(device_status, unique_id), "name": name},
+        is_on=is_on,
+        device_class=device_class,
+        parent_unique_id=parent_unique_id,
+        entity_category=entity_category,
+        extra_state_attributes=extra_state_attributes,
+    )

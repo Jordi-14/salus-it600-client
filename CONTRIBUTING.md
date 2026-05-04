@@ -124,6 +124,11 @@ Keep raw gateway details out of Home Assistant entity classes. When an
 integration needs protocol behavior that is not exposed by the client, add a
 narrow public gateway method here.
 
+Climate parsing should keep shared behavior in the normalized model helpers:
+active heat/cool setpoint selection, active range selection, support fields,
+and diagnostics should work the same way for SQ610, FC600, TRV, and standard
+thermostats wherever their payloads expose equivalent concepts.
+
 Do not infer write payloads from UI names alone. Gateway command mistakes can
 change heating or cooling behavior on real systems.
 
@@ -140,10 +145,9 @@ client:
 Home Assistant should use semantic methods such as:
 
 ```python
-await gateway.set_sq610_device_temperature("thermostat_id", 21.5)
-await gateway.set_sq610_device_temperature("thermostat_id", 24.0, cooling=True)
-await gateway.set_sq610_device_hvac_mode("thermostat_id", "cool")
-await gateway.set_sq610_device_preset("thermostat_id", "Follow Schedule")
+await gateway.set_climate_device_temperature("thermostat_id", 21.5)
+await gateway.set_climate_device_mode("thermostat_id", "cool")
+await gateway.set_climate_device_preset("thermostat_id", "Follow Schedule")
 ```
 
 ## Testing Client Changes With Home Assistant
