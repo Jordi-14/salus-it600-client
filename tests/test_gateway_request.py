@@ -23,6 +23,7 @@ from salus_it600.const import (
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
     PRESET_TEMPORARY_HOLD,
+    HoldType,
     RunningState,
     SystemMode,
 )
@@ -674,6 +675,25 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetSystemMode": 3}, request["id"][0]["sIT600TH"])
+
+    async def test_set_sq610_climate_mode_from_standby_clears_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+            preset_mode=PRESET_OFF,
+            hold_type=int(HoldType.STANDBY),
+        )
+
+        await gateway.set_climate_device_mode("sq610-1", HVAC_MODE_COOL)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetSystemMode": 3, "SetHoldType": 2},
+            request["id"][0]["sIT600TH"],
+        )
 
     async def test_set_sq610_climate_mode_off_writes_standby_hold(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})

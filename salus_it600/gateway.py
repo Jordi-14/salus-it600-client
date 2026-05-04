@@ -1202,8 +1202,13 @@ class IT600Gateway:
                     "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: HoldType.STANDBY}
                 }
             elif mode in _SQ610_HVAC_MODES:
+                payload: dict[str, Any] = {
+                    _SQ610_WRITE_SYSTEM_MODE: _SQ610_HVAC_MODES[mode]
+                }
+                if device.hold_type == int(HoldType.STANDBY):
+                    payload[_SQ610_WRITE_HOLD_TYPE] = HoldType.PERMANENT_HOLD
                 request_data = {
-                    "sIT600TH": {_SQ610_WRITE_SYSTEM_MODE: _SQ610_HVAC_MODES[mode]}
+                    "sIT600TH": payload
                 }
             else:
                 raise ValueError(
