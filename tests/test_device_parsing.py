@@ -551,13 +551,13 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
             device.diagnostic_fields,
         )
 
-    async def test_sq610_cooling_setpoint_does_not_prove_cooling_support(self):
+    async def test_sq610_cooling_control_zero_proves_cooling_support(self):
         gateway = make_gateway_with_response(
             {
                 "status": "success",
                 "id": [
                     {
-                        **common_detail("sq610_heat", "SQ610RF"),
+                        **common_detail("sq610_heat", "SQ610NH"),
                         "sIT600TH": {
                             "LocalTemperature_x100": 2015,
                             "HeatingSetpoint_x100": 2100,
@@ -583,10 +583,43 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(HVAC_MODE_HEAT, device.hvac_mode)
         self.assertEqual(CURRENT_HVAC_IDLE, device.hvac_action)
         self.assertEqual(PRESET_PERMANENT_HOLD, device.preset_mode)
-        self.assertEqual((HVAC_MODE_OFF, HVAC_MODE_HEAT), device.hvac_modes)
+        self.assertEqual((HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL), device.hvac_modes)
         self.assertEqual(21.0, device.target_temperature)
         self.assertEqual(5.0, device.min_temp)
         self.assertEqual(35.0, device.max_temp)
+        self.assertTrue(device.supports_cooling)
+        self.assertEqual("cooling_control", device.cooling_capability_source)
+
+    async def test_sq610_cooling_setpoint_does_not_prove_cooling_support(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_heat", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "CoolingSetpoint_x100": 2400,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 3500,
+                            "MinCoolSetpoint_x100": 1600,
+                            "MaxCoolSetpoint_x100": 3200,
+                            "SystemMode": int(SystemMode.HEAT),
+                            "RunningState": int(RunningState.IDLE),
+                            "HoldType": int(HoldType.PERMANENT_HOLD),
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_heat"}}])
+
+        device = gateway.get_climate_device("sq610_heat")
+        self.assertIsNotNone(device)
+        self.assertEqual(HVAC_MODE_HEAT, device.hvac_mode)
+        self.assertEqual((HVAC_MODE_OFF, HVAC_MODE_HEAT), device.hvac_modes)
         self.assertFalse(device.supports_cooling)
         self.assertEqual("none", device.cooling_capability_source)
 

@@ -223,9 +223,9 @@ class TestClimateModel(unittest.TestCase):
     def test_sq610_cooling_capability_uses_reliable_sources(self):
         cases = [
             ({"cooling_control": 1}, "cooling_control"),
+            ({"cooling_control": 0}, "cooling_control"),
             (
                 {
-                    "cooling_control": 0,
                     "system_mode": SystemMode.COOL,
                     "running_state": RunningState.IDLE,
                 },
@@ -233,7 +233,6 @@ class TestClimateModel(unittest.TestCase):
             ),
             (
                 {
-                    "cooling_control": 0,
                     "system_mode": SystemMode.HEAT,
                     "running_state": RunningState.COOLING,
                 },
@@ -242,7 +241,6 @@ class TestClimateModel(unittest.TestCase):
             ({"known_model_supports_cooling": True}, "known_model"),
             (
                 {
-                    "cooling_control": 0,
                     "system_mode": SystemMode.HEAT,
                     "running_state": RunningState.HEATING,
                 },
@@ -255,9 +253,9 @@ class TestClimateModel(unittest.TestCase):
                 self.assertEqual(expected, sq610_cooling_capability_source(**kwargs))
 
         self.assertTrue(sq610_supports_cooling(cooling_control=1))
+        self.assertTrue(sq610_supports_cooling(cooling_control=0))
         self.assertFalse(
             sq610_supports_cooling(
-                cooling_control=0,
                 system_mode=SystemMode.HEAT,
                 running_state=RunningState.HEATING,
             )

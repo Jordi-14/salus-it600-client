@@ -131,8 +131,10 @@ mutable, such as `data` and `diagnostic_fields`.
 
 SQ610 cooling support must not be inferred from `CoolingSetpoint_x100` alone:
 known heat-only payloads can still include cooling setpoint/range fields. Prefer
-`CoolingControl`, active cool `SystemMode`, active cool `RunningState`, or a
-model/fixture signal that proves cooling is usable.
+the presence of a valid `CoolingControl` field, active cool `SystemMode`, active
+cool `RunningState`, or a model/fixture signal that proves cooling is usable.
+`CoolingControl` value `0` means the cooling control is currently inactive; it
+does not mean the thermostat lacks cooling capability.
 
 `cooling_capability_source` should be a small documented vocabulary rather than
 an arbitrary string. Suggested values:

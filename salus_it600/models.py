@@ -40,6 +40,11 @@ def _int_value(value: Any) -> int | None:
     return None
 
 
+def _has_int_value(value: Any) -> bool:
+    """Return whether a payload field is present as an integer value."""
+    return _int_value(value) is not None
+
+
 def normalized_hold_type(
     value: Any,
     *,
@@ -132,7 +137,7 @@ def sq610_cooling_capability_source(
     known_model_supports_cooling: bool = False,
 ) -> CoolingCapabilitySource:
     """Return the observed source proving SQ610 cooling support."""
-    if _int_value(cooling_control) == 1:
+    if _has_int_value(cooling_control):
         return "cooling_control"
     if normalized_system_mode(system_mode) == int(SystemMode.COOL):
         return "active_system_mode"
