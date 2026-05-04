@@ -124,6 +124,11 @@ Keep raw gateway details out of Home Assistant entity classes. When an
 integration needs protocol behavior that is not exposed by the client, add a
 narrow public gateway method here.
 
+Climate parsing should keep shared behavior in the normalized model helpers:
+active heat/cool setpoint selection, active range selection, support fields,
+and diagnostics should work the same way for SQ610, FC600, TRV, and standard
+thermostats wherever their payloads expose equivalent concepts.
+
 Do not infer write payloads from UI names alone. Gateway command mistakes can
 change heating or cooling behavior on real systems.
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+Normalized climate model:
+
+- Expose one richer `ClimateDevice` model for SQ610, FC600, TRV, and standard
+  thermostats, including hold/system/running state, heat/cool setpoints,
+  active ranges, controls, cooling capability source, online status, and
+  whitelisted diagnostic fields.
+- Route generic climate temperature, mode, preset, and lock writes through the
+  correct device-family protocol path, removing the SQ610-specific public write
+  methods.
+- Select active heat/cool setpoints and ranges through shared normalized helper
+  logic so all thermostat families follow the same rules where their protocol
+  data overlaps.
+- Treat `CoolingControl: 0` as valid proof that an SQ610 supports cooling; the
+  value means cooling control is currently inactive, not unsupported.
+- Include shared climate support fields for diagnostics across thermostat
+  families without requiring Home Assistant to call `fetch_sq610_properties()`
+  during normal polling.
+
 ## 0.4.9 - 2026-05-03
 
 Bug fixes:

@@ -19,6 +19,7 @@ from salus_it600.const import (
 )
 from salus_it600.models import (
     ClimateDevice,
+    active_climate_system_mode,
     active_climate_setpoint,
     active_temperature_range,
     climate_diagnostic_fields,
@@ -149,6 +150,30 @@ class TestClimateModel(unittest.TestCase):
             ),
         )
 
+    def test_active_climate_system_mode_uses_shared_state_signals(self):
+        self.assertEqual(
+            int(SystemMode.COOL),
+            active_climate_system_mode(
+                system_mode=None,
+                hvac_mode=HVAC_MODE_COOL,
+                running_state=RunningState.IDLE,
+            ),
+        )
+        self.assertEqual(
+            int(SystemMode.COOL),
+            active_climate_system_mode(
+                system_mode=SystemMode.HEAT,
+                running_state=RunningState.FAN_COIL_COOLING,
+            ),
+        )
+        self.assertEqual(
+            int(SystemMode.HEAT),
+            active_climate_system_mode(
+                system_mode=None,
+                running_state=RunningState.FAN_COIL_HEATING,
+            ),
+        )
+
     def test_active_temperature_range_uses_system_mode_with_fallbacks(self):
         self.assertEqual(
             (10.0, 30.0),
@@ -268,6 +293,9 @@ class TestClimateModel(unittest.TestCase):
                 "RunningState": int(RunningState.IDLE),
                 "CoolingControl": 1,
                 "OnlineStatus_i": 1,
+                "CoolingSetpoint_x100": 2300,
+                "LocalTemperature_x100": 2100,
+                "UniID": "climate-1",
             },
             climate_diagnostic_fields(
                 {

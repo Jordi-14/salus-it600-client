@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
-from .const import HoldType, RunningState, SystemMode
+from .const import HVAC_MODE_COOL, HVAC_MODE_HEAT, HoldType, RunningState, SystemMode
 
 DeviceData = dict[str, Any]
 ClimateModeList = tuple[str, ...]
@@ -19,6 +19,19 @@ CoolingCapabilitySource = Literal[
 
 CLIMATE_DIAGNOSTIC_FIELD_NAMES = frozenset(
     {
+        "UniID",
+        "DeviceName",
+        "ModelIdentifier_i",
+        "FirmwareVersion",
+        "LocalTemperature_x100",
+        "MeasuredValue_x100",
+        "HeatingSetpoint_x100",
+        "CoolingSetpoint_x100",
+        "MinHeatSetpoint_x100",
+        "MaxHeatSetpoint_x100",
+        "MinCoolSetpoint_x100",
+        "MaxCoolSetpoint_x100",
+        "SunnySetpoint_x100",
         "SystemMode",
         "RunningState",
         "HoldType",
@@ -97,14 +110,55 @@ def normalized_temperature_range(
     )
 
 
+def active_climate_system_mode(
+    *,
+    system_mode: Any,
+    hvac_mode: Any = None,
+    running_state: Any = None,
+) -> int | None:
+    """Return the heat/cool system mode implied by normalized climate state."""
+    normalized_mode = normalized_system_mode(system_mode)
+    running_value = normalized_running_state(running_state, default=None)
+    cooling_running_states = {
+        int(RunningState.COOLING),
+        int(RunningState.FAN_COIL_COOLING),
+    }
+    heating_running_states = {
+        int(RunningState.HEATING),
+        int(RunningState.FAN_COIL_HEATING),
+    }
+    if (
+        normalized_mode == int(SystemMode.COOL)
+        or hvac_mode == HVAC_MODE_COOL
+        or running_value in cooling_running_states
+    ):
+        return int(SystemMode.COOL)
+    if (
+        normalized_mode in {int(SystemMode.HEAT), int(SystemMode.EMERGENCY_HEAT)}
+        or hvac_mode == HVAC_MODE_HEAT
+        or running_value in heating_running_states
+    ):
+        return int(SystemMode.HEAT)
+    return normalized_mode
+
+
 def active_climate_setpoint(
     *,
     system_mode: Any,
     heating_setpoint: float | None,
     cooling_setpoint: float | None,
+    hvac_mode: Any = None,
+    running_state: Any = None,
 ) -> float | None:
     """Return the active heat/cool setpoint for a normalized climate state."""
-    if normalized_system_mode(system_mode) == int(SystemMode.COOL):
+    if (
+        active_climate_system_mode(
+            system_mode=system_mode,
+            hvac_mode=hvac_mode,
+            running_state=running_state,
+        )
+        == int(SystemMode.COOL)
+    ):
         return cooling_setpoint if cooling_setpoint is not None else heating_setpoint
     return heating_setpoint if heating_setpoint is not None else cooling_setpoint
 
@@ -116,9 +170,18 @@ def active_temperature_range(
     max_heat_temp: float | None,
     min_cool_temp: float | None,
     max_cool_temp: float | None,
+    hvac_mode: Any = None,
+    running_state: Any = None,
 ) -> tuple[float | None, float | None]:
     """Return the active heat/cool temperature range."""
-    if normalized_system_mode(system_mode) == int(SystemMode.COOL):
+    if (
+        active_climate_system_mode(
+            system_mode=system_mode,
+            hvac_mode=hvac_mode,
+            running_state=running_state,
+        )
+        == int(SystemMode.COOL)
+    ):
         return (
             min_cool_temp if min_cool_temp is not None else min_heat_temp,
             max_cool_temp if max_cool_temp is not None else max_heat_temp,
@@ -191,9 +254,9 @@ class GatewayDevice(NamedTuple):
 class ClimateDevice:
     """Normalized climate device state.
 
-    The legacy convenience fields are still present while parsing migrates to
-    the richer normalized fields. Mode collections are stored as tuples so a
-    frozen device snapshot is not accidentally mutated by consumers.
+    Common convenience fields stay alongside richer normalized fields. Mode
+    collections are stored as tuples so a frozen device snapshot is not
+    accidentally mutated by consumers.
     """
 
     available: bool

@@ -24,6 +24,20 @@ The protocol-specific payload paths should remain inside the client:
 
 Above those protocol adapters, callers should see one normalized climate model.
 
+## Current Implementation Status
+
+- `ClimateDevice` now carries shared normalized fields for SQ610, FC600, TRV,
+  and standard thermostats.
+- Active target temperature and active min/max range selection use shared model
+  helpers that consider normalized system mode, Home Assistant-facing HVAC
+  mode, and running state.
+- Climate diagnostic fields are a shared whitelist for thermostat families, not
+  a SQ610-only payload escape hatch.
+- Generic climate write methods now route SQ610, FC600, TRV, and standard
+  thermostat commands through the appropriate protocol sections.
+- `fetch_sq610_properties()` remains only as an explicit raw diagnostic helper;
+  normal Home Assistant polling should not depend on it.
+
 ## Current Problem
 
 The current `ClimateDevice` model has only one active target temperature and
@@ -112,9 +126,10 @@ diagnostic_fields: dict[str, Any] | None = None
 
 Convenience fields should be derived from these values:
 
-- `target_temperature`: active heating or cooling setpoint based on
-  `system_mode`.
-- `min_temp` and `max_temp`: active heat/cool range based on `system_mode`.
+- `target_temperature`: active heating or cooling setpoint based on the shared
+  active-mode helper.
+- `min_temp` and `max_temp`: active heat/cool range based on the shared
+  active-mode helper.
 - `hvac_mode`: Home Assistant-facing normalized mode.
 - `preset_mode`: Home Assistant-facing normalized hold state.
 
@@ -146,10 +161,11 @@ an arbitrary string. Suggested values:
 - `none`: no reliable cooling capability signal was observed.
 
 `diagnostic_fields` should also be a documented whitelist of non-sensitive
-support fields, not a flattened raw payload. Include only fields that Home
-Assistant diagnostics or support workflows actually need, such as `SystemMode`,
-`RunningState`, `HoldType`, `LockKey`, `LockKey_a`, `HeatingControl`,
-`CoolingControl`, and `OnlineStatus_i`.
+support fields, not a flattened raw payload. It should be shared across climate
+families and include only fields that Home Assistant diagnostics or support
+workflows actually need, such as `SystemMode`, `RunningState`, `HoldType`,
+`LockKey`, `LockKey_a`, `HeatingControl`, `CoolingControl`, setpoints, ranges,
+model/firmware identifiers, and `OnlineStatus_i`.
 
 Missing values should have explicit semantics:
 
@@ -207,7 +223,8 @@ Missing values should have explicit semantics:
 
 5. Move generic climate writes toward semantic routing.
    - Let `set_climate_device_temperature()` choose heat/cool writes using the
-     normalized active mode for both FC600 and SQ610.
+     shared normalized active mode for SQ610, FC600, TRV, and standard
+     thermostats where their payloads expose equivalent concepts.
    - Validate writes against the matching heat or cool range before sending the
      gateway command.
    - Let `set_climate_device_mode()` route SQ610 heat/cool writes to
@@ -258,8 +275,9 @@ Client tests must cover:
   write paths as the old SQ610-specific methods.
 - SQ610 heat and cool temperature writes validate against the matching heat/cool
   min/max range.
-- SQ610 diagnostic/support fields needed by Home Assistant are present without
-  calling `fetch_sq610_properties()`.
+- Climate diagnostic/support fields needed by Home Assistant are present on the
+  shared `ClimateDevice.diagnostic_fields` path without calling
+  `fetch_sq610_properties()`.
 - FC600 and FC600NH heat/cool setpoint writes still use `sTherS`.
 - FC600 fan mode writes still use `sFanS.SetFanMode`.
 - TRV writes still use `sComm`/`sTherS` as appropriate.

@@ -23,6 +23,7 @@ from salus_it600.const import (
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
     PRESET_TEMPORARY_HOLD,
+    RunningState,
     SystemMode,
 )
 from salus_it600.exceptions import (
@@ -592,6 +593,30 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual(
             {"SetCoolingSetpoint_x100": 2250},
+            request["id"][0]["sIT600TH"],
+        )
+
+    async def test_set_sq610_temperature_uses_running_cool_when_mode_missing(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hvac_mode=HVAC_MODE_COOL,
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+            system_mode=None,
+            running_state=int(RunningState.COOLING),
+            min_heat_temp=5.0,
+            max_heat_temp=25.0,
+            min_cool_temp=18.0,
+            max_cool_temp=30.0,
+        )
+
+        await gateway.set_climate_device_temperature("sq610-1", 27.0)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetCoolingSetpoint_x100": 2700},
             request["id"][0]["sIT600TH"],
         )
 

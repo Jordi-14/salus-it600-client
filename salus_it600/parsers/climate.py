@@ -43,6 +43,7 @@ from ..models import (
     BinarySensorDevice,
     ClimateDevice,
     SensorDevice,
+    active_climate_system_mode,
     active_climate_setpoint,
     active_temperature_range,
     climate_diagnostic_fields,
@@ -234,20 +235,41 @@ def _heat_only_preset_mode(hold_type: int) -> str:
     return PRESET_FOLLOW_SCHEDULE
 
 
-def _heat_only_diagnostic_payload(
+def _climate_diagnostic_payload(
     device_status: dict[str, Any],
     *payloads: dict[str, Any],
 ) -> dict[str, Any]:
-    """Return merged heat-only support fields for diagnostics."""
+    """Return merged support fields for climate diagnostics."""
     diagnostic_payload: dict[str, Any] = {}
+
+    for section_name, field_names in (
+        ("data", ("UniID",)),
+        ("sZDO", ("DeviceName", "FirmwareVersion")),
+        ("DeviceL", ("ModelIdentifier_i",)),
+        ("sTempS", ("MeasuredValue_x100",)),
+    ):
+        section = device_status.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        diagnostic_payload.update(
+            {
+                field_name: section[field_name]
+                for field_name in field_names
+                if field_name in section
+            }
+        )
+
     for payload in payloads:
         diagnostic_payload.update(payload)
+
     ther_ui = device_status.get("sTherUIS")
     if isinstance(ther_ui, dict):
         diagnostic_payload.update(ther_ui)
+
     online_status = _online_status(device_status)
     if online_status is not None:
         diagnostic_payload["OnlineStatus_i"] = online_status
+
     return diagnostic_payload
 
 
@@ -271,13 +293,23 @@ def _parse_sq610_climate_device(
     max_heat_temp = _temperature_from_x100(th.get("MaxHeatSetpoint_x100"))
     min_cool_temp = _temperature_from_x100(th.get("MinCoolSetpoint_x100"))
     max_cool_temp = _temperature_from_x100(th.get("MaxCoolSetpoint_x100"))
-    active_setpoint = active_climate_setpoint(
+    hvac_mode = _sq610_hvac_mode(
+        hold_type=hold_type,
         system_mode=system_mode,
+        running_state=running_state,
+    )
+    active_system_mode = active_climate_system_mode(
+        system_mode=system_mode,
+        hvac_mode=hvac_mode,
+        running_state=running_state,
+    )
+    active_setpoint = active_climate_setpoint(
+        system_mode=active_system_mode,
         heating_setpoint=heating_setpoint,
         cooling_setpoint=cooling_setpoint,
     )
     min_temp, max_temp = active_temperature_range(
-        system_mode=system_mode,
+        system_mode=active_system_mode,
         min_heat_temp=min_heat_temp,
         max_heat_temp=max_heat_temp,
         min_cool_temp=min_cool_temp,
@@ -295,9 +327,7 @@ def _parse_sq610_climate_device(
         running_state=running_state,
     )
     online_status = _online_status(device_status)
-    diagnostic_payload = dict(th)
-    if online_status is not None:
-        diagnostic_payload["OnlineStatus_i"] = online_status
+    diagnostic_payload = _climate_diagnostic_payload(device_status, th)
 
     hvac_modes = (
         (HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL)
@@ -312,11 +342,7 @@ def _parse_sq610_climate_device(
         target_temperature=active_setpoint if active_setpoint is not None else 20.0,
         max_temp=max_temp if max_temp is not None else 35.0,
         min_temp=min_temp if min_temp is not None else 5.0,
-        hvac_mode=_sq610_hvac_mode(
-            hold_type=hold_type,
-            system_mode=system_mode,
-            running_state=running_state,
-        ),
+        hvac_mode=hvac_mode,
         hvac_action=_sq610_hvac_action(
             hold_type=hold_type,
             running_state=running_state,
@@ -398,7 +424,7 @@ def _parse_it600th_climate_device(
         online_status=online_status,
         cooling_capability_source="none",
         diagnostic_fields=climate_diagnostic_fields(
-            _heat_only_diagnostic_payload(device_status, th),
+            _climate_diagnostic_payload(device_status, th),
         ),
     )
 
@@ -421,25 +447,26 @@ def _parse_fan_coil_climate_device(
     max_heat_temp = _temperature_from_x100(ther.get("MaxHeatSetpoint_x100"))
     min_cool_temp = _temperature_from_x100(ther.get("MinCoolSetpoint_x100"))
     max_cool_temp = _temperature_from_x100(ther.get("MaxCoolSetpoint_x100"))
-    active_setpoint = active_climate_setpoint(
+    hvac_mode = _fan_coil_hvac_mode(system_mode)
+    active_system_mode = active_climate_system_mode(
         system_mode=system_mode,
+        hvac_mode=hvac_mode,
+        running_state=running_state,
+    )
+    active_setpoint = active_climate_setpoint(
+        system_mode=active_system_mode,
         heating_setpoint=heating_setpoint,
         cooling_setpoint=cooling_setpoint,
     )
     min_temp, max_temp = active_temperature_range(
-        system_mode=system_mode,
+        system_mode=active_system_mode,
         min_heat_temp=min_heat_temp,
         max_heat_temp=max_heat_temp,
         min_cool_temp=min_cool_temp,
         max_cool_temp=max_cool_temp,
     )
     online_status = _online_status(device_status)
-    diagnostic_payload = {**ther, **scomm}
-    ther_ui = device_status.get("sTherUIS")
-    if isinstance(ther_ui, dict):
-        diagnostic_payload.update(ther_ui)
-    if online_status is not None:
-        diagnostic_payload["OnlineStatus_i"] = online_status
+    diagnostic_payload = _climate_diagnostic_payload(device_status, ther, scomm)
 
     return ClimateDevice(
         **_climate_common_args(device_status, unique_id),
@@ -448,7 +475,7 @@ def _parse_fan_coil_climate_device(
         target_temperature=active_setpoint if active_setpoint is not None else 20.0,
         max_temp=max_temp if max_temp is not None else 40.0,
         min_temp=min_temp if min_temp is not None else 5.0,
-        hvac_mode=_fan_coil_hvac_mode(system_mode),
+        hvac_mode=hvac_mode,
         hvac_action=_fan_coil_hvac_action(
             hold_type=hold_type,
             system_mode=system_mode,
@@ -547,7 +574,7 @@ def _parse_trv_climate_device(
         online_status=online_status,
         cooling_capability_source="none",
         diagnostic_fields=climate_diagnostic_fields(
-            _heat_only_diagnostic_payload(device_status, ther, scomm),
+            _climate_diagnostic_payload(device_status, ther, scomm),
         ),
     )
 

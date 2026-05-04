@@ -59,6 +59,7 @@ from .device_models import (
     is_trv_model,
 )
 from .models import (
+    active_climate_system_mode,
     active_temperature_range,
     GatewayDevice,
     ClimateDevice,
@@ -158,7 +159,11 @@ def _validate_setpoint(
 
 def _uses_cooling_setpoint(device: ClimateDevice) -> bool:
     """Return whether writes should target the cooling setpoint."""
-    return device.system_mode == int(SystemMode.COOL)
+    return active_climate_system_mode(
+        system_mode=device.system_mode,
+        hvac_mode=device.hvac_mode,
+        running_state=device.running_state,
+    ) == int(SystemMode.COOL)
 
 
 def _active_temperature_write_range(device: ClimateDevice) -> tuple[float, float]:
@@ -169,6 +174,8 @@ def _active_temperature_write_range(device: ClimateDevice) -> tuple[float, float
         max_heat_temp=device.max_heat_temp,
         min_cool_temp=device.min_cool_temp,
         max_cool_temp=device.max_cool_temp,
+        hvac_mode=device.hvac_mode,
+        running_state=device.running_state,
     )
     return (
         device.min_temp if min_temp is None else min_temp,

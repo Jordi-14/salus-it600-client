@@ -375,6 +375,13 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("none", device.cooling_capability_source)
         self.assertEqual(
             {
+                "UniID": "thermo_1",
+                "DeviceName": '{"deviceName": "thermo_1"}',
+                "ModelIdentifier_i": "HTRP-RF(50)",
+                "LocalTemperature_x100": 2015,
+                "HeatingSetpoint_x100": 2100,
+                "MinHeatSetpoint_x100": 500,
+                "MaxHeatSetpoint_x100": 3500,
                 "RunningState": int(RunningState.IDLE),
                 "HoldType": int(HoldType.STANDBY),
                 "LockKey": 1,
@@ -486,6 +493,10 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                 "id": [
                     {
                         **common_detail("sq610_cool", "SQ610RF"),
+                        "sZDO": {
+                            "DeviceName": '{"deviceName": "sq610_cool"}',
+                            "FirmwareVersion": "0000001D",
+                        },
                         "sIT600TH": {
                             "LocalTemperature_x100": 2415,
                             "HeatingSetpoint_x100": 2100,
@@ -539,6 +550,18 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("cooling_control", device.cooling_capability_source)
         self.assertEqual(
             {
+                "UniID": "sq610_cool",
+                "DeviceName": '{"deviceName": "sq610_cool"}',
+                "ModelIdentifier_i": "SQ610RF",
+                "FirmwareVersion": "0000001D",
+                "LocalTemperature_x100": 2415,
+                "HeatingSetpoint_x100": 2100,
+                "CoolingSetpoint_x100": 2400,
+                "MinHeatSetpoint_x100": 500,
+                "MaxHeatSetpoint_x100": 3500,
+                "MinCoolSetpoint_x100": 1600,
+                "MaxCoolSetpoint_x100": 3200,
+                "SunnySetpoint_x100": 4550,
                 "SystemMode": int(SystemMode.COOL),
                 "RunningState": int(RunningState.COOLING),
                 "HoldType": int(HoldType.FOLLOW_SCHEDULE),
@@ -550,6 +573,43 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
             },
             device.diagnostic_fields,
         )
+
+    async def test_sq610_running_cool_selects_cooling_target_when_mode_missing(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_cool", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2415,
+                            "HeatingSetpoint_x100": 2100,
+                            "CoolingSetpoint_x100": 2400,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 2500,
+                            "MinCoolSetpoint_x100": 1600,
+                            "MaxCoolSetpoint_x100": 3200,
+                            "RunningState": int(RunningState.COOLING),
+                            "HoldType": int(HoldType.PERMANENT_HOLD),
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_cool"}}])
+
+        device = gateway.get_climate_device("sq610_cool")
+        self.assertIsNotNone(device)
+        self.assertEqual(HVAC_MODE_COOL, device.hvac_mode)
+        self.assertEqual(CURRENT_HVAC_COOL, device.hvac_action)
+        self.assertEqual(24.0, device.target_temperature)
+        self.assertEqual(16.0, device.min_temp)
+        self.assertEqual(32.0, device.max_temp)
+        self.assertIsNone(device.system_mode)
+        self.assertEqual(int(RunningState.COOLING), device.running_state)
+        self.assertTrue(device.supports_cooling)
+        self.assertEqual("active_running_state", device.cooling_capability_source)
 
     async def test_sq610_cooling_control_zero_proves_cooling_support(self):
         gateway = make_gateway_with_response(
@@ -691,6 +751,7 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         device = gateway.get_climate_device("sq610_1")
         self.assertIsNotNone(device)
         self.assertEqual(22.35, device.current_temperature)
+        self.assertEqual(2235, device.diagnostic_fields["MeasuredValue_x100"])
 
     async def test_fc600_cooling_payload_maps_extended_state(self):
         gateway = make_gateway_with_response(
@@ -750,6 +811,16 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("known_model", device.cooling_capability_source)
         self.assertEqual(
             {
+                "UniID": "fan_1",
+                "DeviceName": '{"deviceName": "fan_1"}',
+                "ModelIdentifier_i": "FC600",
+                "LocalTemperature_x100": 2420,
+                "HeatingSetpoint_x100": 2100,
+                "CoolingSetpoint_x100": 2300,
+                "MinHeatSetpoint_x100": 500,
+                "MaxHeatSetpoint_x100": 4000,
+                "MinCoolSetpoint_x100": 1600,
+                "MaxCoolSetpoint_x100": 3200,
                 "SystemMode": int(SystemMode.COOL),
                 "RunningState": int(RunningState.FAN_COIL_COOLING),
                 "HoldType": int(HoldType.ECO),
@@ -850,6 +921,13 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("none", device.cooling_capability_source)
         self.assertEqual(
             {
+                "UniID": "trv_1",
+                "DeviceName": '{"deviceName": "trv_1"}',
+                "ModelIdentifier_i": "TRV3RF",
+                "LocalTemperature_x100": 2015,
+                "HeatingSetpoint_x100": 2100,
+                "MinHeatSetpoint_x100": 500,
+                "MaxHeatSetpoint_x100": 3500,
                 "RunningState": int(RunningState.HEATING),
                 "HoldType": int(HoldType.PERMANENT_HOLD),
                 "HeatingControl": 1,
