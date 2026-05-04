@@ -17,7 +17,6 @@ from .const import (
     HVAC_MODE_COOL,
     HVAC_MODE_OFF,
     PRESET_OFF,
-    PRESET_FOLLOW_SCHEDULE,
     PRESET_PERMANENT_HOLD,
     PRESET_TEMPORARY_HOLD,
     PRESET_ECO,
@@ -60,6 +59,7 @@ from .device_models import (
     is_trv_model,
 )
 from .models import (
+    active_temperature_range,
     GatewayDevice,
     ClimateDevice,
     BinarySensorDevice,
@@ -154,6 +154,26 @@ def _validate_setpoint(
     if setpoint < min_temp or setpoint > max_temp:
         raise ValueError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
     return setpoint
+
+
+def _uses_cooling_setpoint(device: ClimateDevice) -> bool:
+    """Return whether writes should target the cooling setpoint."""
+    return device.system_mode == int(SystemMode.COOL)
+
+
+def _active_temperature_write_range(device: ClimateDevice) -> tuple[float, float]:
+    """Return the active heat/cool setpoint bounds with device min/max fallback."""
+    min_temp, max_temp = active_temperature_range(
+        system_mode=device.system_mode,
+        min_heat_temp=device.min_heat_temp,
+        max_heat_temp=device.max_heat_temp,
+        min_cool_temp=device.min_cool_temp,
+        max_cool_temp=device.max_cool_temp,
+    )
+    return (
+        device.min_temp if min_temp is None else min_temp,
+        device.max_temp if max_temp is None else max_temp,
+    )
 
 
 def _validate_callback(method: UpdateCallback) -> UpdateCallback:
@@ -934,13 +954,6 @@ class IT600Gateway:
             )
         return device
 
-    def _require_sq610_climate_device(self, device_id: str) -> ClimateDevice:
-        """Return an SQ610 climate device or raise a typed validation error."""
-        device = self._require_device(device_id, self._climate_devices, "climate")
-        if not is_sq610_model(device.model):
-            raise ValueError(f"climate device {device_id!r} is not an SQ610")
-        return device
-
     def get_gateway_device(self) -> GatewayDevice | None:
         """Return the cached gateway device, if `poll_status()` has found it."""
 
@@ -1095,70 +1108,6 @@ class IT600Gateway:
             },
         )
 
-    async def set_sq610_device_temperature(
-        self,
-        device_id: str,
-        setpoint_celsius: float,
-        *,
-        cooling: bool = False,
-    ) -> None:
-        """Set an SQ610 heating or cooling setpoint in Celsius."""
-        if not isinstance(cooling, bool):
-            raise TypeError("cooling must be a bool")
-
-        device = self._require_sq610_climate_device(device_id)
-        setpoint_celsius = _validate_setpoint(
-            setpoint_celsius,
-            device.min_temp,
-            device.max_temp,
-        )
-        rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
-        prop = (
-            _SQ610_WRITE_COOLING_SETPOINT
-            if cooling
-            else _SQ610_WRITE_HEATING_SETPOINT
-        )
-
-        await self._write_sq610_property(device, prop, rounded_setpoint)
-
-    async def set_sq610_device_hvac_mode(self, device_id: str, mode: str) -> None:
-        """Set an SQ610 HVAC mode."""
-        device = self._require_sq610_climate_device(device_id)
-        mode = _validate_supported_value(
-            mode,
-            "mode",
-            [HVAC_MODE_HEAT, HVAC_MODE_COOL],
-        )
-        system_mode = SystemMode.COOL if mode == HVAC_MODE_COOL else SystemMode.HEAT
-
-        await self._write_sq610_property(
-            device,
-            _SQ610_WRITE_SYSTEM_MODE,
-            int(system_mode),
-        )
-
-    async def set_sq610_device_preset(self, device_id: str, preset: str) -> None:
-        """Set an SQ610 hold/preset mode."""
-        device = self._require_sq610_climate_device(device_id)
-        preset = _validate_supported_value(
-            preset,
-            "preset",
-            [PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF],
-        )
-        hold_type = (
-            HoldType.STANDBY
-            if preset == PRESET_OFF
-            else HoldType.PERMANENT_HOLD
-            if preset == PRESET_PERMANENT_HOLD
-            else HoldType.FOLLOW_SCHEDULE
-        )
-
-        await self._write_sq610_property(
-            device,
-            _SQ610_WRITE_HOLD_TYPE,
-            int(hold_type),
-        )
-
     async def set_cover_position(self, device_id: str, position: int) -> None:
         """Move a cover to a position where 0 is closed and 100 is open."""
 
@@ -1260,6 +1209,16 @@ class IT600Gateway:
                     else HoldType.FOLLOW_SCHEDULE
                 }
             }
+        elif is_sq610_model(device.model):
+            request_data = {
+                "sIT600TH": {
+                    _SQ610_WRITE_HOLD_TYPE: HoldType.STANDBY
+                    if preset == PRESET_OFF
+                    else HoldType.PERMANENT_HOLD
+                    if preset == PRESET_PERMANENT_HOLD
+                    else HoldType.FOLLOW_SCHEDULE
+                }
+            }
         else:
             request_data = {
                 "sIT600TH": {
@@ -1301,6 +1260,23 @@ class IT600Gateway:
                     else SystemMode.AUTO
                 }
             }
+        elif is_sq610_model(device.model):
+            if mode == HVAC_MODE_OFF:
+                request_data = {
+                    "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: HoldType.STANDBY}
+                }
+            elif mode in (HVAC_MODE_HEAT, HVAC_MODE_COOL):
+                request_data = {
+                    "sIT600TH": {
+                        _SQ610_WRITE_SYSTEM_MODE: SystemMode.COOL
+                        if mode == HVAC_MODE_COOL
+                        else SystemMode.HEAT
+                    }
+                }
+            else:
+                raise ValueError(
+                    "mode must be one of ['cool', 'heat', 'off'] for SQ610 devices"
+                )
         elif is_trv_model(device.model):
             request_data = {
                 "sComm": {
@@ -1316,6 +1292,8 @@ class IT600Gateway:
                 "sIT600TH": {
                     "SetHoldType": HoldType.STANDBY
                     if mode == HVAC_MODE_OFF
+                    else HoldType.PERMANENT_HOLD
+                    if mode == HVAC_MODE_HEAT
                     else HoldType.FOLLOW_SCHEDULE
                 }
             }
@@ -1406,21 +1384,31 @@ class IT600Gateway:
         """Set a climate target temperature in Celsius."""
 
         device = self._require_device(device_id, self._climate_devices, "climate")
+        min_temp, max_temp = _active_temperature_write_range(device)
         setpoint_celsius = _validate_setpoint(
             setpoint_celsius,
-            device.min_temp,
-            device.max_temp,
+            min_temp,
+            max_temp,
         )
         rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
         request_data: dict[str, dict[str, int]]
+        is_cooling = _uses_cooling_setpoint(device)
 
         if is_fan_coil_model(device.model):
-            if device.hvac_mode == HVAC_MODE_COOL:
+            if is_cooling:
                 request_data = {"sTherS": {"SetCoolingSetpoint_x100": rounded_setpoint}}
             else:
                 request_data = {"sTherS": {"SetHeatingSetpoint_x100": rounded_setpoint}}
         elif is_trv_model(device.model):
             request_data = {"sTherS": {"SetHeatingSetpoint_x100": rounded_setpoint}}
+        elif is_sq610_model(device.model):
+            request_data = {
+                "sIT600TH": {
+                    _SQ610_WRITE_COOLING_SETPOINT
+                    if is_cooling
+                    else _SQ610_WRITE_HEATING_SETPOINT: rounded_setpoint
+                }
+            }
         else:
             request_data = {"sIT600TH": {"SetHeatingSetpoint_x100": rounded_setpoint}}
 

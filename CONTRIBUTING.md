@@ -140,10 +140,9 @@ client:
 Home Assistant should use semantic methods such as:
 
 ```python
-await gateway.set_sq610_device_temperature("thermostat_id", 21.5)
-await gateway.set_sq610_device_temperature("thermostat_id", 24.0, cooling=True)
-await gateway.set_sq610_device_hvac_mode("thermostat_id", "cool")
-await gateway.set_sq610_device_preset("thermostat_id", "Follow Schedule")
+await gateway.set_climate_device_temperature("thermostat_id", 21.5)
+await gateway.set_climate_device_mode("thermostat_id", "cool")
+await gateway.set_climate_device_preset("thermostat_id", "Follow Schedule")
 ```
 
 ## Testing Client Changes With Home Assistant

@@ -23,6 +23,7 @@ from salus_it600.const import (
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
     PRESET_TEMPORARY_HOLD,
+    SystemMode,
 )
 from salus_it600.exceptions import (
     IT600CommandError,
@@ -132,6 +133,15 @@ def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
         manufacturer="SALUS",
         model="FC600",
         sw_version=None,
+        system_mode=int(SystemMode.HEAT),
+        heating_setpoint=21.0,
+        cooling_setpoint=22.0,
+        min_heat_temp=5.0,
+        max_heat_temp=35.0,
+        min_cool_temp=5.0,
+        max_cool_temp=35.0,
+        supports_cooling=True,
+        supports_fan=True,
     )
 
 
@@ -363,6 +373,20 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetHoldType": 7}, request["id"][0]["sIT600TH"])
 
+    async def test_set_it600_climate_mode_heat_writes_permanent_hold(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = replace(
+            make_climate_device(),
+            model="HTRP-RF(50)",
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO),
+        )
+
+        await gateway.set_climate_device_mode("climate-1", HVAC_MODE_HEAT)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 2}, request["id"][0]["sIT600TH"])
+
     async def test_set_fc600_climate_mode_cool_writes_system_mode(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
@@ -418,6 +442,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         gateway._climate_devices["climate-1"] = replace(
             make_climate_device(),
             hvac_mode=HVAC_MODE_COOL,
+            system_mode=int(SystemMode.COOL),
         )
 
         await gateway.set_climate_device_temperature("climate-1", 22.3)
@@ -485,6 +510,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             make_climate_device("fc600nh-1"),
             model="FC600NH",
             hvac_mode=HVAC_MODE_COOL,
+            system_mode=int(SystemMode.COOL),
         )
 
         await gateway.set_climate_device_temperature("fc600nh-1", 23.0)
@@ -549,21 +575,19 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             raw_props["sq610-1"],
         )
 
-    async def test_set_sq610_device_temperature_writes_selected_setpoint(self):
+    async def test_set_sq610_temperature_in_cool_mode_writes_cooling_setpoint(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
         gateway._climate_devices["sq610-1"] = replace(
             make_climate_device("sq610-1"),
             model="SQ610RF",
-            min_temp=5.0,
-            max_temp=35.0,
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+            system_mode=int(SystemMode.COOL),
+            min_cool_temp=18.0,
+            max_cool_temp=30.0,
         )
 
-        await gateway.set_sq610_device_temperature(
-            "sq610-1",
-            22.3,
-            cooling=True,
-        )
+        await gateway.set_climate_device_temperature("sq610-1", 22.3)
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual(
@@ -571,20 +595,72 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             request["id"][0]["sIT600TH"],
         )
 
-    async def test_set_sq610_device_hvac_mode_writes_system_mode(self):
+    async def test_set_sq610_temperature_in_heat_mode_writes_heating_setpoint(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
         gateway._climate_devices["sq610-1"] = replace(
             make_climate_device("sq610-1"),
             model="SQ610RF",
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+            system_mode=int(SystemMode.HEAT),
+            min_heat_temp=5.0,
+            max_heat_temp=35.0,
         )
 
-        await gateway.set_sq610_device_hvac_mode("sq610-1", HVAC_MODE_COOL)
+        await gateway.set_climate_device_temperature("sq610-1", 21.2)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual(
+            {"SetHeatingSetpoint_x100": 2100},
+            request["id"][0]["sIT600TH"],
+        )
+
+    async def test_set_sq610_temperature_validates_active_cool_range(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+            system_mode=int(SystemMode.COOL),
+            min_heat_temp=5.0,
+            max_heat_temp=35.0,
+            min_cool_temp=18.0,
+            max_cool_temp=25.0,
+        )
+
+        with self.assertRaises(ValueError):
+            await gateway.set_climate_device_temperature("sq610-1", 16.0)
+
+    async def test_set_sq610_climate_mode_cool_writes_system_mode(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+        )
+
+        await gateway.set_climate_device_mode("sq610-1", HVAC_MODE_COOL)
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetSystemMode": 3}, request["id"][0]["sIT600TH"])
 
-    async def test_set_sq610_device_preset_writes_hold_type(self):
+    async def test_set_sq610_climate_mode_off_writes_standby_hold(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_COOL),
+        )
+
+        await gateway.set_climate_device_mode("sq610-1", HVAC_MODE_OFF)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 7}, request["id"][0]["sIT600TH"])
+
+    async def test_set_sq610_climate_preset_writes_hold_type(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
         gateway._climate_devices["sq610-1"] = replace(
@@ -592,7 +668,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             model="SQ610RF",
         )
 
-        await gateway.set_sq610_device_preset("sq610-1", PRESET_FOLLOW_SCHEDULE)
+        await gateway.set_climate_device_preset("sq610-1", PRESET_FOLLOW_SCHEDULE)
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetHoldType": 0}, request["id"][0]["sIT600TH"])
