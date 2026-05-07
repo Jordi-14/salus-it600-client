@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from salus_it600.exceptions import IT600UnsupportedFirmwareError
 from salus_it600.gateway import IT600Gateway
@@ -20,6 +19,15 @@ class FakeResponse:
     def __init__(self, body: bytes, status: int = 200) -> None:
         self._body = body
         self.status = status
+        self.entered = False
+        self.exited = False
+
+    async def __aenter__(self):
+        self.entered = True
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        self.exited = True
 
     async def read(self) -> bytes:
         return self._body
@@ -32,11 +40,20 @@ class FakeSession:
         self.body = body
         self.status = status
         self.post_calls = []
-        self.get = AsyncMock(return_value=FakeResponse(b"ok"))
+        self.get_calls = []
+        self.responses = []
 
-    async def post(self, url: str, **kwargs):
+    def post(self, url: str, **kwargs):
         self.post_calls.append((url, kwargs))
-        return FakeResponse(self.body, self.status)
+        response = FakeResponse(self.body, self.status)
+        self.responses.append(response)
+        return response
+
+    def get(self, url: str, **kwargs):
+        self.get_calls.append((url, kwargs))
+        response = FakeResponse(b"ok")
+        self.responses.append(response)
+        return response
 
 
 class FakeProtocol:
@@ -115,6 +132,9 @@ class TestProtocols(unittest.IsolatedAsyncioTestCase):
         result = await protocol.connect(session, "192.0.2.10", 80, 5)
 
         self.assertEqual("success", result["status"])
+        self.assertEqual(5, session.post_calls[0][1]["timeout"].total)
+        self.assertTrue(session.responses[0].entered)
+        self.assertTrue(session.responses[0].exited)
 
     async def test_aes_ccm_connect_success(self) -> None:
         protocol = AesCcmProtocol(self.EUID)
@@ -150,7 +170,7 @@ class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
         self.assertIs(gateway._protocol, success)
 
     async def test_reject_frames_raise_unsupported_firmware(self) -> None:
-        session = SimpleNamespace(get=AsyncMock(return_value=FakeResponse(b"ok")))
+        session = FakeSession()
         gateway = IT600Gateway(
             host="192.0.2.10",
             euid="001E5E0D32906128",

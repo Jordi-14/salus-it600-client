@@ -453,8 +453,7 @@ class IT600Gateway:
             return gateway_mac
         except IT600ConnectionError as ae:
             try:
-                async with asyncio.timeout(self._request_timeout):
-                    await self._session.get(f"http://{self._host}:{self._port}/")
+                await self._probe_gateway_root()
             except (asyncio.TimeoutError, client_exceptions.ClientError):
                 raise IT600ConnectionError(
                     "Error occurred while communicating with iT600 gateway: "
@@ -515,8 +514,7 @@ class IT600Gateway:
             )
 
         try:
-            async with asyncio.timeout(self._request_timeout):
-                await self._session.get(f"http://{self._host}:{self._port}/")
+            await self._probe_gateway_root()
         except (asyncio.TimeoutError, client_exceptions.ClientError) as exc:
             raise IT600ConnectionError(
                 "Error occurred while communicating with iT600 gateway: "
@@ -532,6 +530,19 @@ class IT600Gateway:
             "Error occurred while communicating with iT600 gateway: "
             "check if you have specified EUID correctly"
         )
+
+    def _client_timeout(self) -> aiohttp.ClientTimeout:
+        """Return the per-request timeout used for gateway HTTP calls."""
+        return aiohttp.ClientTimeout(total=self._request_timeout)
+
+    async def _probe_gateway_root(self) -> None:
+        """Probe the gateway root endpoint with normal response cleanup."""
+        assert self._session is not None
+        async with self._session.get(
+            f"http://{self._host}:{self._port}/",
+            timeout=self._client_timeout(),
+        ) as resp:
+            await resp.read()
 
     async def poll_status(self, send_callback: bool = False) -> None:
         """Refresh all known device collections from the gateway.
@@ -1362,54 +1373,56 @@ class IT600Gateway:
                         await asyncio.sleep(self._transient_write_retry_delay)
 
                 try:
-                    async with asyncio.timeout(self._request_timeout):
-                        resp = await self._session.post(
-                            request_url,
-                            data=request_payload,
-                            headers={"content-type": "application/json"},
-                        )
+                    async with self._session.post(
+                        request_url,
+                        data=request_payload,
+                        headers={"content-type": "application/json"},
+                        timeout=self._client_timeout(),
+                    ) as resp:
                         response_bytes = await resp.read()
-                        _validate_http_status(
-                            getattr(resp, "status", 200),
-                            command,
-                        )
-                        _raise_for_gateway_frame(response_bytes, command)
+                        response_status = getattr(resp, "status", 200)
 
-                        try:
-                            if self._protocol is not None:
-                                response_json_string = self._protocol.unwrap_response(
-                                    response_bytes
-                                )
-                            else:
-                                response_json_string = self._encryptor.decrypt(
-                                    response_bytes
-                                )
-                        except Exception as e:
-                            raise IT600CommandError(
-                                f"Failed to decrypt gateway response for '{command}' "
-                                f"request"
-                            ) from e
+                    _validate_http_status(
+                        response_status,
+                        command,
+                    )
+                    _raise_for_gateway_frame(response_bytes, command)
 
-                        if self._debug:
-                            _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
-
-                        response_json = _validate_gateway_response(
-                            json.loads(response_json_string),
-                            command,
-                        )
-
-                        if response_json["status"] != "success":
-                            repr_request_body = repr(request_body)
-                            repr_response_body = repr(response_json)
-
-                            _LOGGER.error("%s failed: %s", command, repr_request_body)
-                            raise IT600CommandError(
-                                f"iT600 gateway rejected '{command}' command with "
-                                f"content '{repr_request_body}' and response "
-                                f"'{repr_response_body}'"
+                    try:
+                        if self._protocol is not None:
+                            response_json_string = self._protocol.unwrap_response(
+                                response_bytes
                             )
+                        else:
+                            response_json_string = self._encryptor.decrypt(
+                                response_bytes
+                            )
+                    except Exception as e:
+                        raise IT600CommandError(
+                            f"Failed to decrypt gateway response for '{command}' "
+                            f"request"
+                        ) from e
 
-                        return response_json
+                    if self._debug:
+                        _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
+
+                    response_json = _validate_gateway_response(
+                        json.loads(response_json_string),
+                        command,
+                    )
+
+                    if response_json["status"] != "success":
+                        repr_request_body = repr(request_body)
+                        repr_response_body = repr(response_json)
+
+                        _LOGGER.error("%s failed: %s", command, repr_request_body)
+                        raise IT600CommandError(
+                            f"iT600 gateway rejected '{command}' command with "
+                            f"content '{repr_request_body}' and response "
+                            f"'{repr_response_body}'"
+                        )
+
+                    return response_json
                 except client_exceptions.ServerDisconnectedError as e:
                     if attempt < retry_attempts - 1:
                         continue

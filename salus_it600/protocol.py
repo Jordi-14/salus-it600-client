@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import dataclasses
 import json
 from typing import Any
@@ -93,17 +92,19 @@ class GatewayProtocol(abc.ABC):
         """Perform a readall request and return the parsed response."""
         url = f"http://{host}:{port}/deviceid/read"
         encrypted = self.wrap_request(json.dumps({"requestAttr": "readall"}))
+        request_timeout = aiohttp.ClientTimeout(total=timeout)
 
-        async with asyncio.timeout(timeout):
-            resp = await session.post(
-                url,
-                data=encrypted,
-                headers={"content-type": "application/json"},
-            )
+        async with session.post(
+            url,
+            data=encrypted,
+            headers={"content-type": "application/json"},
+            timeout=request_timeout,
+        ) as resp:
             raw = await resp.read()
+            status = resp.status
 
-        if resp.status != 200:
-            raise ValueError(f"HTTP {resp.status}")
+        if status != 200:
+            raise ValueError(f"HTTP {status}")
 
         frame = parse_frame_33(raw)
         if frame is not None:
