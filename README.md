@@ -119,10 +119,11 @@ Buttons (SB600, CSB600) — actions only work through the Salus Smart Home app.
 ## Development
 
 ```bash
-python -m venv venv && source venv/bin/activate
-pip install -e ".[dev]"
-pytest
-ruff check .
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture details and contribution guidelines.
@@ -141,8 +142,11 @@ from salus_it600.gateway import IT600Gateway
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Licensed under either the Apache License, Version 2.0
+([LICENSE-APACHE](LICENSE-APACHE)) or the MIT License
+([LICENSE-MIT](LICENSE-MIT)), at your option. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE) for the license expression and attribution details.
 
 ## Project origin
 
-This project is a maintained fork of [epoplavskis/pyit600](https://github.com/epoplavskis/pyit600). It incorporates protocol, device-support, and parser work from [leonardpitzu/homeassistant_salus](https://github.com/leonardpitzu/homeassistant_salus).
+This project is a maintained fork of [epoplavskis/pyit600](https://github.com/epoplavskis/pyit600). It incorporates protocol, device-support, and parser work from [leonardpitzu/homeassistant_salus](https://github.com/leonardpitzu/homeassistant_salus). Leonard Pitzu has since joined development here, and his fork has been retired.

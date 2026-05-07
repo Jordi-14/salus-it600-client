@@ -1,15 +1,12 @@
 # Release Process
 
-This project publishes to PyPI with GitHub Actions trusted publishing. No PyPI
-API token is stored in GitHub.
+This project publishes to PyPI with GitHub Actions trusted publishing. No PyPI API token is stored in GitHub.
 
 ## Policy
 
 `master` is the release branch. Keep it stable and releasable.
 
-Do not publish on every push to `master`. PyPI release files are immutable, so a
-push without a version bump would fail, and an accidental direct push could
-publish a broken package. Instead, publish from version tags on `master`.
+Do not publish on every push to `master`. PyPI release files are immutable, so a push without a version bump would fail, and an accidental direct push could publish a broken package. Instead, publish from version tags on `master`.
 
 The practical invariant is:
 
@@ -31,13 +28,9 @@ For an existing PyPI project:
    - Workflow name: `publish.yml`
    - Environment name: `pypi`
 
-If the PyPI project does not exist yet, create a pending publisher from the PyPI
-account publishing settings with the same values and project name
-`salus-it600-client`.
+If the PyPI project does not exist yet, create a pending publisher from the PyPI account publishing settings with the same values and project name `salus-it600-client`.
 
-Create a GitHub environment named `pypi`. Leave it without required reviewers if
-publishing should be fully automatic after pushing a release tag. Add required
-reviewers if you want a final manual approval step before PyPI upload.
+Create a GitHub environment named `pypi`. Leave it without required reviewers if publishing should be fully automatic after pushing a release tag. Add required reviewers if you want a final manual approval step before PyPI upload.
 
 ## Normal Development
 
@@ -65,7 +58,7 @@ After merging the release commit to `master`, tag that exact commit:
 ```bash
 git switch master
 git pull --ff-only origin master
-python3 -m unittest
+python3 -m pytest tests -q
 python3 -m ruff check salus_it600 tests main.py
 python3 -m mypy
 python3 -m build
@@ -93,11 +86,8 @@ git tag -f vX.Y.Z
 git push --force origin vX.Y.Z
 ```
 
-If any file was already uploaded to PyPI, never reuse that version. Bump to the
-next version and publish a new tag.
+If any file was already uploaded to PyPI, never reuse that version. Bump to the next version and publish a new tag.
 
 ## Direct `master` Pushes
 
-Avoid direct pushes to `master` except for repository maintenance that is known
-not to need a package release. Prefer branch protection on GitHub with required
-CI checks before merge.
+Avoid direct pushes to `master` except for repository maintenance that is known not to need a package release. Prefer branch protection on GitHub with required CI checks before merge.

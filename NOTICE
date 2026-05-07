@@ -1,0 +1,13 @@
+Salus iT600 Python client
+
+This project is a maintained fork/successor of:
+
+- https://github.com/jvitkauskas/pyit600
+- https://github.com/epoplavskis/pyit600
+
+It incorporates and reworks feature ideas and code from Leonard Pitzu's
+MIT-licensed fork:
+
+- https://github.com/leonardpitzu/homeassistant_salus
+
+The upstream MIT copyright and permission notices are preserved in LICENSE-MIT.

@@ -1,4 +1,7 @@
 include LICENSE
+include LICENSE-APACHE
+include LICENSE-MIT
+include NOTICE
 include README.md
 prune docs
 include docs/device-protocol.md
