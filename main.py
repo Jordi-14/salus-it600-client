@@ -7,25 +7,113 @@ import argparse
 import asyncio
 import logging
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from salus_it600.exceptions import IT600AuthenticationError, IT600ConnectionError
 from salus_it600.gateway import IT600Gateway
 
-WRITE_ACTIONS = (
-    "set_temperature",
-    "set_climate_mode",
-    "set_climate_preset",
-    "set_fan_mode",
-    "turn_on_switch",
-    "turn_off_switch",
-    "open_cover",
-    "close_cover",
-    "set_cover_position",
-    "lock_climate",
-    "unlock_climate",
-)
+
+@dataclass(frozen=True, slots=True)
+class WriteAction:
+    """A parsed CLI write action mapped to a gateway method."""
+
+    method_name: str
+    arguments: Callable[[Any], tuple[Any, ...]]
+    message: str
+
+
+def _single_device(value: str) -> tuple[str]:
+    """Return one device ID argument."""
+    return (value,)
+
+
+def _device_and_text(value: Sequence[str]) -> tuple[str, str]:
+    """Return a device ID plus a text argument."""
+    device_id, text = value
+    return device_id, text
+
+
+def _device_and_float(value: Sequence[str]) -> tuple[str, float]:
+    """Return a device ID plus a float argument."""
+    device_id, number = value
+    return device_id, float(number)
+
+
+def _device_and_int(value: Sequence[str]) -> tuple[str, int]:
+    """Return a device ID plus an integer argument."""
+    device_id, number = value
+    return device_id, int(number)
+
+
+def _lock_device(value: str) -> tuple[str, bool]:
+    """Return a device ID plus a lock state."""
+    return value, True
+
+
+def _unlock_device(value: str) -> tuple[str, bool]:
+    """Return a device ID plus an unlock state."""
+    return value, False
+
+
+WRITE_ACTIONS: dict[str, WriteAction] = {
+    "set_temperature": WriteAction(
+        "set_climate_device_temperature",
+        _device_and_float,
+        "Set {0} target temperature to {1:g} C",
+    ),
+    "set_climate_mode": WriteAction(
+        "set_climate_device_mode",
+        _device_and_text,
+        "Set {0} climate mode to {1}",
+    ),
+    "set_climate_preset": WriteAction(
+        "set_climate_device_preset",
+        _device_and_text,
+        "Set {0} climate preset to {1}",
+    ),
+    "set_fan_mode": WriteAction(
+        "set_climate_device_fan_mode",
+        _device_and_text,
+        "Set {0} fan mode to {1}",
+    ),
+    "turn_on_switch": WriteAction(
+        "turn_on_switch_device",
+        _single_device,
+        "Turned on switch {0}",
+    ),
+    "turn_off_switch": WriteAction(
+        "turn_off_switch_device",
+        _single_device,
+        "Turned off switch {0}",
+    ),
+    "open_cover": WriteAction(
+        "open_cover",
+        _single_device,
+        "Opened cover {0}",
+    ),
+    "close_cover": WriteAction(
+        "close_cover",
+        _single_device,
+        "Closed cover {0}",
+    ),
+    "set_cover_position": WriteAction(
+        "set_cover_position",
+        _device_and_int,
+        "Set {0} cover position to {1}",
+    ),
+    "lock_climate": WriteAction(
+        "set_climate_device_locked",
+        _lock_device,
+        "Locked climate keypad {0}",
+    ),
+    "unlock_climate": WriteAction(
+        "set_climate_device_locked",
+        _unlock_device,
+        "Unlocked climate keypad {0}",
+    ),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -134,69 +222,31 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def _write_requested(args: argparse.Namespace) -> bool:
     """Return whether the parsed arguments include a write command."""
-    return any(getattr(args, action) is not None for action in WRITE_ACTIONS)
+    return _selected_write_action(args) is not None
 
 
-async def _run_write_action(gateway: IT600Gateway, args: argparse.Namespace) -> None:
+def _selected_write_action(
+    args: argparse.Namespace,
+) -> tuple[WriteAction, Any] | None:
+    """Return the selected write action and raw parser value, if any."""
+    for name, action in WRITE_ACTIONS.items():
+        value = getattr(args, name)
+        if value is not None:
+            return action, value
+    return None
+
+
+async def run_write_action(gateway: IT600Gateway, args: argparse.Namespace) -> None:
     """Run the selected write command, if any."""
-    if args.set_temperature is not None:
-        device_id, temperature = args.set_temperature
-        await gateway.set_climate_device_temperature(device_id, float(temperature))
-        print(f"Set {device_id} target temperature to {float(temperature):g} C")
+    selected = _selected_write_action(args)
+    if selected is None:
         return
 
-    if args.set_climate_mode is not None:
-        device_id, mode = args.set_climate_mode
-        await gateway.set_climate_device_mode(device_id, mode)
-        print(f"Set {device_id} climate mode to {mode}")
-        return
-
-    if args.set_climate_preset is not None:
-        device_id, preset = args.set_climate_preset
-        await gateway.set_climate_device_preset(device_id, preset)
-        print(f"Set {device_id} climate preset to {preset}")
-        return
-
-    if args.set_fan_mode is not None:
-        device_id, mode = args.set_fan_mode
-        await gateway.set_climate_device_fan_mode(device_id, mode)
-        print(f"Set {device_id} fan mode to {mode}")
-        return
-
-    if args.turn_on_switch is not None:
-        await gateway.turn_on_switch_device(args.turn_on_switch)
-        print(f"Turned on switch {args.turn_on_switch}")
-        return
-
-    if args.turn_off_switch is not None:
-        await gateway.turn_off_switch_device(args.turn_off_switch)
-        print(f"Turned off switch {args.turn_off_switch}")
-        return
-
-    if args.open_cover is not None:
-        await gateway.open_cover(args.open_cover)
-        print(f"Opened cover {args.open_cover}")
-        return
-
-    if args.close_cover is not None:
-        await gateway.close_cover(args.close_cover)
-        print(f"Closed cover {args.close_cover}")
-        return
-
-    if args.set_cover_position is not None:
-        device_id, position = args.set_cover_position
-        await gateway.set_cover_position(device_id, int(position))
-        print(f"Set {device_id} cover position to {int(position)}")
-        return
-
-    if args.lock_climate is not None:
-        await gateway.set_climate_device_locked(args.lock_climate, True)
-        print(f"Locked climate keypad {args.lock_climate}")
-        return
-
-    if args.unlock_climate is not None:
-        await gateway.set_climate_device_locked(args.unlock_climate, False)
-        print(f"Unlocked climate keypad {args.unlock_climate}")
+    action, value = selected
+    method_args = action.arguments(value)
+    method = getattr(gateway, action.method_name)
+    await method(*method_args)
+    print(action.message.format(*method_args))
 
 
 def _print_devices(title: str, devices: Mapping[str, Any]) -> None:
@@ -257,7 +307,7 @@ async def async_main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         try:
-            await _run_write_action(gateway, args)
+            await run_write_action(gateway, args)
         except (KeyError, TypeError, ValueError) as exc:
             print(f"Command error: {exc}", file=sys.stderr)
             return 3

@@ -546,7 +546,9 @@ class IT600Gateway:
 
     async def _probe_gateway_root(self) -> None:
         """Probe the gateway root endpoint with normal response cleanup."""
-        assert self._session is not None
+        if self._session is None:
+            raise IT600ConnectionError("Gateway session has not been initialized")
+
         async with self._session.get(
             f"http://{self._host}:{self._port}/",
             timeout=self._client_timeout(),

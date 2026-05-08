@@ -93,6 +93,7 @@ class FakeSession:
         self.post_calls = []
         self.get_calls = []
         self.responses = []
+        self.closed = False
 
     def post(self, url: str, **kwargs) -> FakeResponse:
         self.post_calls.append((url, kwargs))
@@ -110,6 +111,9 @@ class FakeSession:
         response = FakeResponse({})
         self.responses.append(response)
         return response
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 def make_gateway(session: FakeSession) -> IT600Gateway:
@@ -171,6 +175,24 @@ def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
 
 
 class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
+    async def test_close_does_not_close_external_session(self) -> None:
+        session = FakeSession({"status": "success", "id": []})
+        gateway = make_gateway(session)
+
+        await gateway.close()
+        async with gateway:
+            pass
+
+        self.assertFalse(session.closed)
+
+    async def test_probe_gateway_root_without_session_raises_connection_error(
+        self,
+    ) -> None:
+        gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128")
+
+        with self.assertRaises(IT600ConnectionError):
+            await gateway._probe_gateway_root()
+
     async def test_make_encrypted_request_returns_success_response(self):
         session = FakeSession({"status": "success", "id": []})
         gateway = make_gateway(session)
