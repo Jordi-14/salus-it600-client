@@ -52,6 +52,9 @@ Original = "https://github.com/epoplavskis/pyit600"
 [tool.setuptools.packages.find]
 include = ["salus_it600", "salus_it600.*"]
 
+[tool.setuptools.package-data]
+salus_it600 = ["py.typed"]
+
 [tool.mypy]
 files = ["salus_it600"]
 python_version = "3.11"

@@ -3,6 +3,8 @@ include LICENSE-APACHE
 include LICENSE-MIT
 include NOTICE
 include README.md
+include salus_it600/py.typed
 prune docs
+include docs/demo-cli.md
 include docs/device-protocol.md
 recursive-include tests *.py

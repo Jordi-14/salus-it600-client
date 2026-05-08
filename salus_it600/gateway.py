@@ -49,7 +49,13 @@ from .exceptions import (
     IT600ConnectionError,
     IT600UnsupportedFirmwareError,
 )
-from .protocol import GatewayProtocol, parse_frame_33
+from .protocol import (
+    GatewayProtocol,
+    ProtocolDetectionError,
+    ProtocolRejected,
+    ProtocolUnsupported,
+    parse_frame_33,
+)
 from .protocol_aes_cbc import AesCbcProtocol
 from .protocol_aes_ccm import AesCcmProtocol
 from .device_models import (
@@ -453,8 +459,7 @@ class IT600Gateway:
             return gateway_mac
         except IT600ConnectionError as ae:
             try:
-                async with asyncio.timeout(self._request_timeout):
-                    await self._session.get(f"http://{self._host}:{self._port}/")
+                await self._probe_gateway_root()
             except (asyncio.TimeoutError, client_exceptions.ClientError):
                 raise IT600ConnectionError(
                     "Error occurred while communicating with iT600 gateway: "
@@ -483,7 +488,7 @@ class IT600Gateway:
         assert self._session is not None
         result: dict[str, Any] | None = None
         saw_reject = False
-        saw_new_protocol = False
+        saw_unsupported_protocol = False
 
         for protocol in self._protocol_candidates():
             try:
@@ -497,13 +502,16 @@ class IT600Gateway:
                 self._protocol = protocol
                 _LOGGER.debug("Salus protocol %s succeeded", protocol.name)
                 break
-            except Exception as exc:
-                message = str(exc).lower()
+            except (ProtocolRejected, ProtocolUnsupported) as exc:
                 _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
-                if "reject frame" in message:
+                if isinstance(exc, ProtocolRejected):
                     saw_reject = True
-                if "new-protocol frame" in message:
-                    saw_new_protocol = True
+                else:
+                    saw_unsupported_protocol = True
+            except ProtocolDetectionError as exc:
+                _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
+            except Exception as exc:
+                _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
 
         if result is not None:
             gateway_mac = _gateway_mac_from_readall(result)
@@ -515,15 +523,14 @@ class IT600Gateway:
             )
 
         try:
-            async with asyncio.timeout(self._request_timeout):
-                await self._session.get(f"http://{self._host}:{self._port}/")
+            await self._probe_gateway_root()
         except (asyncio.TimeoutError, client_exceptions.ClientError) as exc:
             raise IT600ConnectionError(
                 "Error occurred while communicating with iT600 gateway: "
                 "check if you have specified host/IP address correctly"
             ) from exc
 
-        if saw_reject or saw_new_protocol:
+        if saw_reject or saw_unsupported_protocol:
             raise IT600UnsupportedFirmwareError(
                 "Gateway is reachable but uses an unsupported encryption protocol"
             )
@@ -532,6 +539,21 @@ class IT600Gateway:
             "Error occurred while communicating with iT600 gateway: "
             "check if you have specified EUID correctly"
         )
+
+    def _client_timeout(self) -> aiohttp.ClientTimeout:
+        """Return the per-request timeout used for gateway HTTP calls."""
+        return aiohttp.ClientTimeout(total=self._request_timeout)
+
+    async def _probe_gateway_root(self) -> None:
+        """Probe the gateway root endpoint with normal response cleanup."""
+        if self._session is None:
+            raise IT600ConnectionError("Gateway session has not been initialized")
+
+        async with self._session.get(
+            f"http://{self._host}:{self._port}/",
+            timeout=self._client_timeout(),
+        ) as resp:
+            await resp.read()
 
     async def poll_status(self, send_callback: bool = False) -> None:
         """Refresh all known device collections from the gateway.
@@ -1362,54 +1384,56 @@ class IT600Gateway:
                         await asyncio.sleep(self._transient_write_retry_delay)
 
                 try:
-                    async with asyncio.timeout(self._request_timeout):
-                        resp = await self._session.post(
-                            request_url,
-                            data=request_payload,
-                            headers={"content-type": "application/json"},
-                        )
+                    async with self._session.post(
+                        request_url,
+                        data=request_payload,
+                        headers={"content-type": "application/json"},
+                        timeout=self._client_timeout(),
+                    ) as resp:
                         response_bytes = await resp.read()
-                        _validate_http_status(
-                            getattr(resp, "status", 200),
-                            command,
-                        )
-                        _raise_for_gateway_frame(response_bytes, command)
+                        response_status = getattr(resp, "status", 200)
 
-                        try:
-                            if self._protocol is not None:
-                                response_json_string = self._protocol.unwrap_response(
-                                    response_bytes
-                                )
-                            else:
-                                response_json_string = self._encryptor.decrypt(
-                                    response_bytes
-                                )
-                        except Exception as e:
-                            raise IT600CommandError(
-                                f"Failed to decrypt gateway response for '{command}' "
-                                f"request"
-                            ) from e
+                    _validate_http_status(
+                        response_status,
+                        command,
+                    )
+                    _raise_for_gateway_frame(response_bytes, command)
 
-                        if self._debug:
-                            _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
-
-                        response_json = _validate_gateway_response(
-                            json.loads(response_json_string),
-                            command,
-                        )
-
-                        if response_json["status"] != "success":
-                            repr_request_body = repr(request_body)
-                            repr_response_body = repr(response_json)
-
-                            _LOGGER.error("%s failed: %s", command, repr_request_body)
-                            raise IT600CommandError(
-                                f"iT600 gateway rejected '{command}' command with "
-                                f"content '{repr_request_body}' and response "
-                                f"'{repr_response_body}'"
+                    try:
+                        if self._protocol is not None:
+                            response_json_string = self._protocol.unwrap_response(
+                                response_bytes
                             )
+                        else:
+                            response_json_string = self._encryptor.decrypt(
+                                response_bytes
+                            )
+                    except Exception as e:
+                        raise IT600CommandError(
+                            f"Failed to decrypt gateway response for '{command}' "
+                            f"request"
+                        ) from e
 
-                        return response_json
+                    if self._debug:
+                        _LOGGER.debug("Gateway response:\n%s\n", response_json_string)
+
+                    response_json = _validate_gateway_response(
+                        json.loads(response_json_string),
+                        command,
+                    )
+
+                    if response_json["status"] != "success":
+                        repr_request_body = repr(request_body)
+                        repr_response_body = repr(response_json)
+
+                        _LOGGER.error("%s failed: %s", command, repr_request_body)
+                        raise IT600CommandError(
+                            f"iT600 gateway rejected '{command}' command with "
+                            f"content '{repr_request_body}' and response "
+                            f"'{repr_response_body}'"
+                        )
+
+                    return response_json
                 except client_exceptions.ServerDisconnectedError as e:
                     if attempt < retry_attempts - 1:
                         continue

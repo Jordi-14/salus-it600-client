@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import dataclasses
 import json
 from typing import Any
@@ -43,6 +42,66 @@ class Frame33:
         if self.trailer == NEW_PROTOCOL_TRAILER:
             return "new-protocol"
         return f"unknown(0x{self.trailer:02X})"
+
+
+class ProtocolDetectionError(Exception):
+    """Base class for gateway protocol probing failures."""
+
+
+class ProtocolHttpError(ProtocolDetectionError):
+    """Gateway returned an HTTP error while probing a protocol candidate."""
+
+    def __init__(self, status: int) -> None:
+        """Create an HTTP protocol probing error."""
+        self.status = status
+        super().__init__(f"Gateway returned HTTP {status}")
+
+
+class ProtocolFrameError(ProtocolDetectionError):
+    """Gateway returned a typed protocol marker frame."""
+
+    def __init__(self, frame: Frame33 | None, message: str) -> None:
+        """Create a protocol frame error."""
+        self.frame = frame
+        super().__init__(message)
+
+
+class ProtocolRejected(ProtocolFrameError):
+    """Gateway rejected this protocol candidate."""
+
+    def __init__(self, frame: Frame33 | None = None) -> None:
+        """Create a protocol rejected error."""
+        super().__init__(frame, "Gateway returned a reject frame")
+
+
+class ProtocolUnsupported(ProtocolFrameError):
+    """Gateway reported a protocol this client does not support."""
+
+    def __init__(self, frame: Frame33 | None = None) -> None:
+        """Create an unsupported protocol error."""
+        if frame is None:
+            message = "Gateway returned an unsupported protocol frame"
+        else:
+            message = f"Gateway returned a {frame.trailer_name} frame"
+        super().__init__(frame, message)
+
+
+class ProtocolDecryptFailed(ProtocolDetectionError):
+    """Protocol candidate could not decrypt the gateway response."""
+
+    def __init__(self, cause: Exception) -> None:
+        """Create a decryption failure."""
+        self.cause = cause
+        super().__init__(f"Decryption failed ({type(cause).__name__}: {cause})")
+
+
+class ProtocolInvalidResponse(ProtocolDetectionError):
+    """Protocol candidate produced an invalid gateway response."""
+
+    def __init__(self, reason: str) -> None:
+        """Create an invalid response error."""
+        self.reason = reason
+        super().__init__(reason)
 
 
 def parse_frame_33(raw: bytes) -> Frame33 | None:
@@ -93,44 +152,46 @@ class GatewayProtocol(abc.ABC):
         """Perform a readall request and return the parsed response."""
         url = f"http://{host}:{port}/deviceid/read"
         encrypted = self.wrap_request(json.dumps({"requestAttr": "readall"}))
+        request_timeout = aiohttp.ClientTimeout(total=timeout)
 
-        async with asyncio.timeout(timeout):
-            resp = await session.post(
-                url,
-                data=encrypted,
-                headers={"content-type": "application/json"},
-            )
+        async with session.post(
+            url,
+            data=encrypted,
+            headers={"content-type": "application/json"},
+            timeout=request_timeout,
+        ) as resp:
             raw = await resp.read()
+            status = resp.status
 
-        if resp.status != 200:
-            raise ValueError(f"HTTP {resp.status}")
+        if status != 200:
+            raise ProtocolHttpError(status)
 
         frame = parse_frame_33(raw)
         if frame is not None:
             if frame.is_reject:
-                raise ValueError("Gateway returned a reject frame")
-            raise ValueError("Gateway returned a new-protocol frame")
+                raise ProtocolRejected(frame)
+            raise ProtocolUnsupported(frame)
 
         try:
             text = self.unwrap_response(raw)
         except Exception as exc:
-            raise ValueError(
-                f"Decryption failed ({type(exc).__name__}: {exc})"
-            ) from exc
+            raise ProtocolDecryptFailed(exc) from exc
 
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Decrypted response is not valid JSON: {exc}") from exc
+            raise ProtocolInvalidResponse(
+                f"Decrypted response is not valid JSON: {exc}"
+            ) from exc
 
         if not isinstance(parsed, dict):
-            raise ValueError(
+            raise ProtocolInvalidResponse(
                 f"Decrypted response is not a JSON object: {type(parsed).__name__}"
             )
 
         result: dict[str, Any] = parsed
         if result.get("status") != "success":
-            raise ValueError(f"status={result.get('status')}")
+            raise ProtocolInvalidResponse(f"status={result.get('status')}")
         return result
 
     @abc.abstractmethod

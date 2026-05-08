@@ -49,9 +49,26 @@ class PassthroughEncryptor:
 class FakeResponse:
     """Minimal aiohttp response stand-in."""
 
-    def __init__(self, payload, status: int = 200):
+    def __init__(
+        self,
+        payload,
+        status: int = 200,
+        error: Exception | None = None,
+    ):
         self._payload = payload
         self.status = status
+        self._error = error
+        self.entered = False
+        self.exited = False
+
+    async def __aenter__(self):
+        self.entered = True
+        if self._error is not None:
+            raise self._error
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        self.exited = True
 
     async def read(self) -> bytes:
         if isinstance(self._payload, bytes):
@@ -74,19 +91,29 @@ class FakeSession:
         self.error_sequence = error_sequence or []
         self.status = status
         self.post_calls = []
+        self.get_calls = []
+        self.responses = []
+        self.closed = False
 
-    async def post(self, url: str, **kwargs) -> FakeResponse:
+    def post(self, url: str, **kwargs) -> FakeResponse:
         self.post_calls.append((url, kwargs))
+        error = None
         if self.error_sequence:
             error = self.error_sequence.pop(0)
-            if error is not None:
-                raise error
-        if self.error is not None:
-            raise self.error
-        return FakeResponse(self.payload, self.status)
+        elif self.error is not None:
+            error = self.error
+        response = FakeResponse(self.payload, self.status, error)
+        self.responses.append(response)
+        return response
 
-    async def get(self, url: str) -> FakeResponse:
-        return FakeResponse({})
+    def get(self, url: str, **kwargs) -> FakeResponse:
+        self.get_calls.append((url, kwargs))
+        response = FakeResponse({})
+        self.responses.append(response)
+        return response
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 def make_gateway(session: FakeSession) -> IT600Gateway:
@@ -148,6 +175,24 @@ def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
 
 
 class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
+    async def test_close_does_not_close_external_session(self) -> None:
+        session = FakeSession({"status": "success", "id": []})
+        gateway = make_gateway(session)
+
+        await gateway.close()
+        async with gateway:
+            pass
+
+        self.assertFalse(session.closed)
+
+    async def test_probe_gateway_root_without_session_raises_connection_error(
+        self,
+    ) -> None:
+        gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128")
+
+        with self.assertRaises(IT600ConnectionError):
+            await gateway._probe_gateway_root()
+
     async def test_make_encrypted_request_returns_success_response(self):
         session = FakeSession({"status": "success", "id": []})
         gateway = make_gateway(session)
@@ -163,6 +208,9 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             b'{"requestAttr": "readall"}',
             session.post_calls[0][1]["data"],
         )
+        self.assertEqual(5, session.post_calls[0][1]["timeout"].total)
+        self.assertTrue(session.responses[0].entered)
+        self.assertTrue(session.responses[0].exited)
 
     async def test_make_encrypted_request_preserves_gateway_rejection_error(self):
         session = FakeSession({"status": "fail", "id": [{"status": "fail"}]})
