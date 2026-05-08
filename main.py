@@ -212,17 +212,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments and enforce write confirmation."""
+    """Parse command-line arguments."""
     parser = build_parser()
-    args = parser.parse_args(argv)
-    if _write_requested(args) and not args.yes:
-        parser.error("write commands require --yes")
-    return args
+    return parser.parse_args(argv)
 
 
 def _write_requested(args: argparse.Namespace) -> bool:
     """Return whether the parsed arguments include a write command."""
     return _selected_write_action(args) is not None
+
+
+def _write_confirmation_missing(args: argparse.Namespace) -> bool:
+    """Return whether a write command needs explicit confirmation."""
+    return _write_requested(args) and not args.yes
 
 
 def _selected_write_action(
@@ -285,6 +287,10 @@ async def async_main(argv: Sequence[str] | None = None) -> int:
     """Run the demo utility."""
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+
+    if _write_confirmation_missing(args):
+        print("Command error: write commands require --yes", file=sys.stderr)
+        return 3
 
     async with IT600Gateway(host=args.host, euid=args.euid, debug=args.debug) as gateway:
         try:

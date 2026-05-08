@@ -56,9 +56,45 @@ class TestDemoCli(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(demo_cli._write_requested(args))
 
-    def test_write_command_requires_confirmation(self) -> None:
-        with self.assertRaises(SystemExit):
-            demo_cli.parse_args(
+    async def test_write_command_requires_confirmation(self) -> None:
+        result = await demo_cli.async_main(
+            [
+                "--host",
+                "192.0.2.10",
+                "--euid",
+                "euid",
+                "--set-temperature",
+                "climate-1",
+                "21.5",
+            ]
+        )
+
+        self.assertEqual(3, result)
+
+    def test_write_command_without_confirmation_still_parses(self) -> None:
+        args = demo_cli.parse_args(
+            [
+                "--host",
+                "192.0.2.10",
+                "--euid",
+                "euid",
+                "--set-temperature",
+                "climate-1",
+                "21.5",
+            ]
+        )
+
+        self.assertTrue(demo_cli._write_confirmation_missing(args))
+
+    async def test_missing_write_confirmation_does_not_connect(self) -> None:
+        class ConnectGateway(FakeGateway):
+            async def connect(self) -> None:
+                self.calls.append(("connect",))
+
+        original_gateway = demo_cli.IT600Gateway
+        try:
+            demo_cli.IT600Gateway = ConnectGateway
+            result = await demo_cli.async_main(
                 [
                     "--host",
                     "192.0.2.10",
@@ -69,6 +105,10 @@ class TestDemoCli(unittest.IsolatedAsyncioTestCase):
                     "21.5",
                 ]
             )
+        finally:
+            demo_cli.IT600Gateway = original_gateway
+
+        self.assertEqual(3, result)
 
     async def test_temperature_write_dispatch(self) -> None:
         args = demo_cli.parse_args(
