@@ -6,9 +6,21 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from salus_it600.exceptions import IT600UnsupportedFirmwareError
+from salus_it600.exceptions import (
+    IT600AuthenticationError,
+    IT600UnsupportedFirmwareError,
+)
 from salus_it600.gateway import IT600Gateway
-from salus_it600.protocol import is_new_protocol_frame, is_reject_frame, parse_frame_33
+from salus_it600.protocol import (
+    ProtocolDecryptFailed,
+    ProtocolHttpError,
+    ProtocolInvalidResponse,
+    ProtocolRejected,
+    ProtocolUnsupported,
+    is_new_protocol_frame,
+    is_reject_frame,
+    parse_frame_33,
+)
 from salus_it600.protocol_aes_cbc import AesCbcProtocol
 from salus_it600.protocol_aes_ccm import AesCcmProtocol, _derive_key
 
@@ -145,6 +157,49 @@ class TestProtocols(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("success", result["status"])
 
+    async def test_connect_reject_frame_raises_typed_error(self) -> None:
+        protocol = AesCbcProtocol(self.EUID)
+        session = FakeSession(bytes(32) + b"\xae")
+
+        with self.assertRaises(ProtocolRejected) as context:
+            await protocol.connect(session, "192.0.2.10", 80, 5)
+
+        self.assertIsNotNone(context.exception.frame)
+
+    async def test_connect_new_protocol_frame_raises_typed_error(self) -> None:
+        protocol = AesCbcProtocol(self.EUID)
+        session = FakeSession(bytes(32) + b"\xaf")
+
+        with self.assertRaises(ProtocolUnsupported) as context:
+            await protocol.connect(session, "192.0.2.10", 80, 5)
+
+        self.assertIsNotNone(context.exception.frame)
+
+    async def test_connect_http_error_raises_typed_error(self) -> None:
+        protocol = AesCbcProtocol(self.EUID)
+        session = FakeSession(b"", status=503)
+
+        with self.assertRaises(ProtocolHttpError) as context:
+            await protocol.connect(session, "192.0.2.10", 80, 5)
+
+        self.assertEqual(503, context.exception.status)
+
+    async def test_connect_decrypt_error_raises_typed_error(self) -> None:
+        protocol = AesCbcProtocol(self.EUID)
+        session = FakeSession(b"\xff")
+
+        with self.assertRaises(ProtocolDecryptFailed):
+            await protocol.connect(session, "192.0.2.10", 80, 5)
+
+    async def test_connect_invalid_response_raises_typed_error(self) -> None:
+        protocol = AesCbcProtocol(self.EUID)
+        session = FakeSession(protocol.encrypt(json.dumps({"status": "fail"})))
+
+        with self.assertRaises(ProtocolInvalidResponse) as context:
+            await protocol.connect(session, "192.0.2.10", 80, 5)
+
+        self.assertEqual("status=fail", context.exception.reason)
+
 
 class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
     """Test gateway protocol auto-detection."""
@@ -177,11 +232,40 @@ class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
             session=session,
         )
         gateway._protocol_candidates = lambda: [
-            FakeProtocol("first", error=ValueError("Gateway returned a reject frame")),
-            FakeProtocol("second", error=ValueError("Gateway returned a reject frame")),
+            FakeProtocol("first", error=ProtocolRejected()),
+            FakeProtocol("second", error=ProtocolRejected()),
         ]
 
         with self.assertRaises(IT600UnsupportedFirmwareError):
+            await gateway.connect()
+
+    async def test_unsupported_frames_raise_unsupported_firmware(self) -> None:
+        session = FakeSession()
+        gateway = IT600Gateway(
+            host="192.0.2.10",
+            euid="001E5E0D32906128",
+            session=session,
+        )
+        gateway._protocol_candidates = lambda: [
+            FakeProtocol("first", error=ProtocolUnsupported()),
+            FakeProtocol("second", error=ProtocolUnsupported()),
+        ]
+
+        with self.assertRaises(IT600UnsupportedFirmwareError):
+            await gateway.connect()
+
+    async def test_protocol_detection_does_not_parse_error_messages(self) -> None:
+        session = FakeSession()
+        gateway = IT600Gateway(
+            host="192.0.2.10",
+            euid="001E5E0D32906128",
+            session=session,
+        )
+        gateway._protocol_candidates = lambda: [
+            FakeProtocol("first", error=ValueError("Gateway returned a reject frame")),
+        ]
+
+        with self.assertRaises(IT600AuthenticationError):
             await gateway.connect()
 
     async def test_detected_protocol_is_used_for_requests(self) -> None:

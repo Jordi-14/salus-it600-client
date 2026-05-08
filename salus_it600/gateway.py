@@ -49,7 +49,13 @@ from .exceptions import (
     IT600ConnectionError,
     IT600UnsupportedFirmwareError,
 )
-from .protocol import GatewayProtocol, parse_frame_33
+from .protocol import (
+    GatewayProtocol,
+    ProtocolDetectionError,
+    ProtocolRejected,
+    ProtocolUnsupported,
+    parse_frame_33,
+)
 from .protocol_aes_cbc import AesCbcProtocol
 from .protocol_aes_ccm import AesCcmProtocol
 from .device_models import (
@@ -482,7 +488,7 @@ class IT600Gateway:
         assert self._session is not None
         result: dict[str, Any] | None = None
         saw_reject = False
-        saw_new_protocol = False
+        saw_unsupported_protocol = False
 
         for protocol in self._protocol_candidates():
             try:
@@ -496,13 +502,16 @@ class IT600Gateway:
                 self._protocol = protocol
                 _LOGGER.debug("Salus protocol %s succeeded", protocol.name)
                 break
-            except Exception as exc:
-                message = str(exc).lower()
+            except (ProtocolRejected, ProtocolUnsupported) as exc:
                 _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
-                if "reject frame" in message:
+                if isinstance(exc, ProtocolRejected):
                     saw_reject = True
-                if "new-protocol frame" in message:
-                    saw_new_protocol = True
+                else:
+                    saw_unsupported_protocol = True
+            except ProtocolDetectionError as exc:
+                _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
+            except Exception as exc:
+                _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
 
         if result is not None:
             gateway_mac = _gateway_mac_from_readall(result)
@@ -521,7 +530,7 @@ class IT600Gateway:
                 "check if you have specified host/IP address correctly"
             ) from exc
 
-        if saw_reject or saw_new_protocol:
+        if saw_reject or saw_unsupported_protocol:
             raise IT600UnsupportedFirmwareError(
                 "Gateway is reachable but uses an unsupported encryption protocol"
             )
