@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Best-practice hardening:
+
+- Use aiohttp response context managers with explicit per-request
+  `ClientTimeout` handling for gateway probes, protocol detection, and
+  encrypted command requests.
+- Replace protocol-detection string matching with typed protocol errors for
+  rejected or unsupported frames, HTTP errors, decrypt failures, and invalid
+  decrypted responses.
+- Make the demo CLI read-only by default, require `--yes` for write commands,
+  and document the safe read-only and explicit write flows.
+- Mark the package as typed with `py.typed` and include the marker in wheel and
+  source distributions.
+
 ## 0.5.0 - 2026-05-04
 
 Normalized climate model:
