@@ -46,6 +46,7 @@ PRESET_PERMANENT_HOLD = "Permanent Hold"
 PRESET_TEMPORARY_HOLD = "Temporary Hold"
 PRESET_ECO = "Eco"
 PRESET_OFF = "Off"
+PRESET_AWAY = "Away"
 
 # Supported fan modes
 FAN_MODE_AUTO = "Auto"
@@ -63,6 +64,7 @@ class HoldType(IntEnum):
     PERMANENT_HOLD = 2
     STANDBY = 7
     ECO = 10
+    AWAY = 6
 
 
 class SystemMode(IntEnum):

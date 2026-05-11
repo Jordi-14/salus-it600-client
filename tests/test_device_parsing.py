@@ -11,6 +11,7 @@ from salus_it600.const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
@@ -164,6 +165,39 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(battery)
         self.assertEqual(100, battery.state)
         self.assertEqual("diagnostic", battery.entity_category)
+
+    async def test_sq610_parser_maps_away_hold_type_to_preset(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_away", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2150,
+                            "HeatingSetpoint_x100": 2200,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 3500,
+                            "SystemMode": int(SystemMode.HEAT),
+                            "RunningState": int(RunningState.HEATING),
+                            "HoldType": int(HoldType.AWAY),
+                            "LockKey": 0,
+                            "LockKey_a": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices(
+            [{"data": {"UniID": "sq610_away"}}],
+        )
+
+        device = gateway.get_climate_device("sq610_away")
+        self.assertIsNotNone(device)
+        self.assertEqual(PRESET_AWAY, device.preset_mode)
+        self.assertIn(PRESET_AWAY, device.preset_modes)
+        self.assertEqual(int(HoldType.AWAY), device.hold_type)
 
     async def test_binary_sensor_parser_uses_model_device_class(self):
         gateway = make_gateway_with_response(

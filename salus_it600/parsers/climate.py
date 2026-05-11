@@ -22,6 +22,7 @@ from ..const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
@@ -141,6 +142,10 @@ def _sq610_preset_mode(hold_type: int) -> str:
     """Return the SQ610 preset corresponding to HoldType."""
     if hold_type == HoldType.STANDBY:
         return PRESET_OFF
+    if hold_type == HoldType.AWAY:
+        return PRESET_AWAY
+    if hold_type == HoldType.TEMPORARY_HOLD:
+        return PRESET_TEMPORARY_HOLD
     if hold_type == HoldType.PERMANENT_HOLD:
         return PRESET_PERMANENT_HOLD
     return PRESET_FOLLOW_SCHEDULE
@@ -351,7 +356,7 @@ def _parse_sq610_climate_device(
         ),
         hvac_modes=hvac_modes,
         preset_mode=_sq610_preset_mode(hold_type),
-        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_AWAY, PRESET_TEMPORARY_HOLD, PRESET_PERMANENT_HOLD, PRESET_OFF),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status, th),

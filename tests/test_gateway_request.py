@@ -18,6 +18,7 @@ from salus_it600.const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
@@ -769,6 +770,26 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetHoldType": 0}, request["id"][0]["sIT600TH"])
+
+    async def test_set_sq610_climate_preset_away_writes_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            preset_modes=(
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_AWAY,
+                PRESET_TEMPORARY_HOLD,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
+        )
+
+        await gateway.set_climate_device_preset("sq610-1", PRESET_AWAY)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 6}, request["id"][0]["sIT600TH"])
 
     async def test_public_commands_reject_blank_device_id(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
