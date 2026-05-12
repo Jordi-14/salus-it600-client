@@ -27,7 +27,7 @@ from ..const import (
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD,
+    PRESET_SCHEDULE_OVERRIDE,
     SUPPORT_FAN_MODE,
     SUPPORT_PRESET_MODE,
     SUPPORT_TARGET_TEMPERATURE,
@@ -145,7 +145,7 @@ def _sq610_preset_mode(hold_type: int) -> str:
     if hold_type == HoldType.AWAY:
         return PRESET_AWAY
     if hold_type == HoldType.TEMPORARY_HOLD:
-        return PRESET_TEMPORARY_HOLD
+        return PRESET_SCHEDULE_OVERRIDE
     if hold_type == HoldType.PERMANENT_HOLD:
         return PRESET_PERMANENT_HOLD
     return PRESET_FOLLOW_SCHEDULE
@@ -191,7 +191,7 @@ def _fan_coil_preset_mode(hold_type: int) -> str:
     if hold_type == HoldType.ECO:
         return PRESET_ECO
     if hold_type == HoldType.TEMPORARY_HOLD:
-        return PRESET_TEMPORARY_HOLD
+        return PRESET_SCHEDULE_OVERRIDE
     return PRESET_FOLLOW_SCHEDULE
 
 
@@ -356,7 +356,7 @@ def _parse_sq610_climate_device(
         ),
         hvac_modes=hvac_modes,
         preset_mode=_sq610_preset_mode(hold_type),
-        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_AWAY, PRESET_TEMPORARY_HOLD, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_AWAY, PRESET_SCHEDULE_OVERRIDE, PRESET_PERMANENT_HOLD, PRESET_OFF),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status, th),
@@ -494,7 +494,7 @@ def _parse_fan_coil_climate_device(
             PRESET_OFF,
             PRESET_PERMANENT_HOLD,
             PRESET_ECO,
-            PRESET_TEMPORARY_HOLD,
+            PRESET_SCHEDULE_OVERRIDE,
             PRESET_FOLLOW_SCHEDULE,
         ),
         fan_mode=_fan_coil_fan_mode(fan_mode),

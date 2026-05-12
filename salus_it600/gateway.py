@@ -18,7 +18,7 @@ from .const import (
     HVAC_MODE_OFF,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD,
+    PRESET_SCHEDULE_OVERRIDE,
     PRESET_ECO,
     PRESET_AWAY,
     FAN_MODE_AUTO,
@@ -89,13 +89,12 @@ _FAN_COIL_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_ECO: HoldType.ECO,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD: HoldType.TEMPORARY_HOLD,
+    PRESET_SCHEDULE_OVERRIDE: HoldType.TEMPORARY_HOLD,
 }
 _HEAT_ONLY_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_AWAY: HoldType.AWAY,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD: HoldType.TEMPORARY_HOLD,
 }
 _FAN_COIL_HVAC_MODES = {
     HVAC_MODE_HEAT: SystemMode.HEAT,
@@ -1191,11 +1190,19 @@ class IT600Gateway:
                 )}
             }
         elif is_sq610_model(device.model):
-            request_data = {
-                "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: _HEAT_ONLY_PRESET_HOLD_TYPES.get(
+            if preset == PRESET_SCHEDULE_OVERRIDE:
+                hold_value = (
+                    HoldType.TEMPORARY_HOLD
+                    if device.hold_type == int(HoldType.PERMANENT_HOLD)
+                    else HoldType.FOLLOW_SCHEDULE
+                )
+            else:
+                hold_value = _HEAT_ONLY_PRESET_HOLD_TYPES.get(
                     preset,
                     HoldType.FOLLOW_SCHEDULE,
-                )}
+                )
+            request_data = {
+                "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: hold_value}
             }
         else:
             request_data = {

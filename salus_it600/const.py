@@ -43,7 +43,7 @@ CURRENT_HVAC_IDLE = "idle"
 # Supported presets
 PRESET_FOLLOW_SCHEDULE = "Follow Schedule"
 PRESET_PERMANENT_HOLD = "Permanent Hold"
-PRESET_TEMPORARY_HOLD = "Temporary Hold"
+PRESET_SCHEDULE_OVERRIDE = "Schedule Override"
 PRESET_ECO = "Eco"
 PRESET_OFF = "Off"
 PRESET_AWAY = "Away"
