@@ -462,6 +462,16 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetHoldType": 10}, request["id"][0]["sComm"])
 
+    async def test_set_fc600_schedule_override_preset_writes_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        await gateway.set_climate_device_preset("climate-1", PRESET_SCHEDULE_OVERRIDE)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 1}, request["id"][0]["sComm"])
+
     async def test_set_trv3rf_preset_writes_scomm_hold_type(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
