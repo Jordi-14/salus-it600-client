@@ -1176,11 +1176,19 @@ class IT600Gateway:
         request_data: dict[str, dict[str, Any]]
 
         if is_fan_coil_model(device.model):
-            request_data = {
-                "sComm": {"SetHoldType": _FAN_COIL_PRESET_HOLD_TYPES.get(
+            if preset == PRESET_SCHEDULE_OVERRIDE:
+                hold_value = (
+                    HoldType.TEMPORARY_HOLD
+                    if device.hold_type == int(HoldType.PERMANENT_HOLD)
+                    else HoldType.FOLLOW_SCHEDULE
+                )
+            else:
+                hold_value = _FAN_COIL_PRESET_HOLD_TYPES.get(
                     preset,
                     HoldType.FOLLOW_SCHEDULE,
-                )}
+                )
+            request_data = {
+                "sComm": {"SetHoldType": hold_value}
             }
         elif is_trv_model(device.model):
             request_data = {
