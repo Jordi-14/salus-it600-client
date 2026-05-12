@@ -1978,7 +1978,7 @@ I also noticed that the commands are different from IT600 regulators, but I did 
 
 "HoldType" : ,
 0 = Follow Schedule, 
-1 = Temporary Hold, 
+1 = Schedule Override, 
 2 = Permanent Hold, 
 10 =ECO, 
 7 = Off
@@ -2482,7 +2482,7 @@ Hi, @George-andrew I have some questions:
 Set FAN speed, 
 Heat/Cool,  
 Follow Schedule, 
-Temporary Hold, 
+Schedule Override, 
 Permanent Hold, 
 ECO,  
 OFF,
