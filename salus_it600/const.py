@@ -62,9 +62,9 @@ class HoldType(IntEnum):
     FOLLOW_SCHEDULE = 0
     TEMPORARY_HOLD = 1
     PERMANENT_HOLD = 2
+    AWAY = 6
     STANDBY = 7
     ECO = 10
-    AWAY = 6
 
 
 class SystemMode(IntEnum):

@@ -96,6 +96,12 @@ _HEAT_ONLY_PRESET_HOLD_TYPES = {
     PRESET_AWAY: HoldType.AWAY,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
 }
+_SQ610_PRESET_HOLD_TYPES = {
+    PRESET_OFF: HoldType.STANDBY,
+    PRESET_AWAY: HoldType.AWAY,
+    PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
+    PRESET_SCHEDULE_OVERRIDE: HoldType.TEMPORARY_HOLD,
+}
 _FAN_COIL_HVAC_MODES = {
     HVAC_MODE_HEAT: SystemMode.HEAT,
     HVAC_MODE_COOL: SystemMode.COOL,
@@ -1176,17 +1182,10 @@ class IT600Gateway:
         request_data: dict[str, dict[str, Any]]
 
         if is_fan_coil_model(device.model):
-            if preset == PRESET_SCHEDULE_OVERRIDE:
-                hold_value = (
-                    HoldType.TEMPORARY_HOLD
-                    if device.hold_type == int(HoldType.PERMANENT_HOLD)
-                    else HoldType.FOLLOW_SCHEDULE
-                )
-            else:
-                hold_value = _FAN_COIL_PRESET_HOLD_TYPES.get(
-                    preset,
-                    HoldType.FOLLOW_SCHEDULE,
-                )
+            hold_value = _FAN_COIL_PRESET_HOLD_TYPES.get(
+                preset,
+                HoldType.FOLLOW_SCHEDULE,
+            )
             request_data = {
                 "sComm": {"SetHoldType": hold_value}
             }
@@ -1198,17 +1197,10 @@ class IT600Gateway:
                 )}
             }
         elif is_sq610_model(device.model):
-            if preset == PRESET_SCHEDULE_OVERRIDE:
-                hold_value = (
-                    HoldType.TEMPORARY_HOLD
-                    if device.hold_type == int(HoldType.PERMANENT_HOLD)
-                    else HoldType.FOLLOW_SCHEDULE
-                )
-            else:
-                hold_value = _HEAT_ONLY_PRESET_HOLD_TYPES.get(
-                    preset,
-                    HoldType.FOLLOW_SCHEDULE,
-                )
+            hold_value = _SQ610_PRESET_HOLD_TYPES.get(
+                preset,
+                HoldType.FOLLOW_SCHEDULE,
+            )
             request_data = {
                 "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: hold_value}
             }
