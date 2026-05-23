@@ -151,6 +151,14 @@ def _sq610_preset_mode(hold_type: int) -> str:
     return PRESET_FOLLOW_SCHEDULE
 
 
+def _sq610_preset_modes(hold_type: int) -> tuple[str, ...]:
+    """Return SQ610 presets, adding Schedule Override only while active."""
+    modes = [PRESET_FOLLOW_SCHEDULE, PRESET_AWAY, PRESET_PERMANENT_HOLD, PRESET_OFF]
+    if hold_type == HoldType.TEMPORARY_HOLD:
+        modes.insert(2, PRESET_SCHEDULE_OVERRIDE)
+    return tuple(modes)
+
+
 def _fan_coil_hvac_mode(system_mode: int | None) -> str:
     """Return the FC600 Home Assistant-style HVAC mode."""
     if system_mode == SystemMode.HEAT:
@@ -193,6 +201,19 @@ def _fan_coil_preset_mode(hold_type: int) -> str:
     if hold_type == HoldType.TEMPORARY_HOLD:
         return PRESET_SCHEDULE_OVERRIDE
     return PRESET_FOLLOW_SCHEDULE
+
+
+def _fan_coil_preset_modes(hold_type: int) -> tuple[str, ...]:
+    """Return FC600 presets, adding Schedule Override only while active."""
+    modes = [
+        PRESET_OFF,
+        PRESET_PERMANENT_HOLD,
+        PRESET_ECO,
+        PRESET_FOLLOW_SCHEDULE,
+    ]
+    if hold_type == HoldType.TEMPORARY_HOLD:
+        modes.insert(3, PRESET_SCHEDULE_OVERRIDE)
+    return tuple(modes)
 
 
 def _fan_coil_fan_mode(fan_mode: Any) -> str:
@@ -356,7 +377,7 @@ def _parse_sq610_climate_device(
         ),
         hvac_modes=hvac_modes,
         preset_mode=_sq610_preset_mode(hold_type),
-        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_AWAY, PRESET_SCHEDULE_OVERRIDE, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        preset_modes=_sq610_preset_modes(hold_type),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status, th),
@@ -490,13 +511,7 @@ def _parse_fan_coil_climate_device(
         ),
         hvac_modes=(HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO),
         preset_mode=_fan_coil_preset_mode(hold_type),
-        preset_modes=(
-            PRESET_OFF,
-            PRESET_PERMANENT_HOLD,
-            PRESET_ECO,
-            PRESET_SCHEDULE_OVERRIDE,
-            PRESET_FOLLOW_SCHEDULE,
-        ),
+        preset_modes=_fan_coil_preset_modes(hold_type),
         fan_mode=_fan_coil_fan_mode(fan_mode),
         fan_modes=(
             FAN_MODE_AUTO,

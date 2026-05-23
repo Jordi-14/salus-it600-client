@@ -89,7 +89,6 @@ _FAN_COIL_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_ECO: HoldType.ECO,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
-    PRESET_SCHEDULE_OVERRIDE: HoldType.TEMPORARY_HOLD,
 }
 _HEAT_ONLY_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
@@ -100,7 +99,6 @@ _SQ610_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_AWAY: HoldType.AWAY,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
-    PRESET_SCHEDULE_OVERRIDE: HoldType.TEMPORARY_HOLD,
 }
 _FAN_COIL_HVAC_MODES = {
     HVAC_MODE_HEAT: SystemMode.HEAT,
@@ -1179,6 +1177,8 @@ class IT600Gateway:
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         preset = _validate_supported_value(preset, "preset", device.preset_modes)
+        if preset == PRESET_SCHEDULE_OVERRIDE:
+            return
         request_data: dict[str, dict[str, Any]]
 
         if is_fan_coil_model(device.model):
