@@ -197,8 +197,15 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         device = gateway.get_climate_device("sq610_away")
         self.assertIsNotNone(device)
         self.assertEqual(PRESET_AWAY, device.preset_mode)
-        self.assertIn(PRESET_AWAY, device.preset_modes)
-        self.assertNotIn(PRESET_SCHEDULE_OVERRIDE, device.preset_modes)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_AWAY,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
         self.assertEqual(int(HoldType.AWAY), device.hold_type)
 
     async def test_sq610_parser_exposes_schedule_override_only_when_active(self):
@@ -231,7 +238,16 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         device = gateway.get_climate_device("sq610_override")
         self.assertIsNotNone(device)
         self.assertEqual(PRESET_SCHEDULE_OVERRIDE, device.preset_mode)
-        self.assertIn(PRESET_SCHEDULE_OVERRIDE, device.preset_modes)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_AWAY,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
 
     async def test_binary_sensor_parser_uses_model_device_class(self):
         gateway = make_gateway_with_response(
@@ -856,7 +872,15 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(HVAC_MODE_COOL, device.hvac_mode)
         self.assertEqual(CURRENT_HVAC_COOL, device.hvac_action)
         self.assertEqual(PRESET_ECO, device.preset_mode)
-        self.assertNotIn(PRESET_SCHEDULE_OVERRIDE, device.preset_modes)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_ECO,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
         self.assertEqual(FAN_MODE_HIGH, device.fan_mode)
         self.assertEqual(23.0, device.target_temperature)
         self.assertEqual(16.0, device.min_temp)
@@ -927,7 +951,16 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         device = gateway.get_climate_device("fan_override")
         self.assertIsNotNone(device)
         self.assertEqual(PRESET_SCHEDULE_OVERRIDE, device.preset_mode)
-        self.assertIn(PRESET_SCHEDULE_OVERRIDE, device.preset_modes)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_ECO,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
 
     async def test_fc600nh_variant_parsed_as_fan_coil(self):
         gateway = make_gateway_with_response(
