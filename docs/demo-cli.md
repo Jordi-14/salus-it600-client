@@ -64,6 +64,7 @@ Set a climate preset. Quote presets that contain spaces:
 ```bash
 python main.py --host HOST --euid EUID --yes --set-climate-preset DEVICE_ID "Permanent Hold"
 python main.py --host HOST --euid EUID --yes --set-climate-preset DEVICE_ID "Follow Schedule"
+python main.py --host HOST --euid EUID --yes --set-climate-preset DEVICE_ID Away
 ```
 
 Set an FC600 fan mode:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 - 2026-05-23
+
+Device support:
+
+- Add SQ610 Away hold support.
+- Report SQ610 and FC600 temporary schedule overrides as `Schedule Override`.
+- Expose `Schedule Override` only while the gateway reports hold type `1`;
+  selecting it is treated as a reported-state no-op rather than a command.
+
 ## 0.5.1 - 2026-05-08
 
 Best-practice hardening:

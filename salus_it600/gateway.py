@@ -18,8 +18,9 @@ from .const import (
     HVAC_MODE_OFF,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD,
+    PRESET_SCHEDULE_OVERRIDE,
     PRESET_ECO,
+    PRESET_AWAY,
     FAN_MODE_AUTO,
     FAN_MODE_HIGH,
     FAN_MODE_MEDIUM,
@@ -88,10 +89,15 @@ _FAN_COIL_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_ECO: HoldType.ECO,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD: HoldType.TEMPORARY_HOLD,
 }
 _HEAT_ONLY_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
+    PRESET_AWAY: HoldType.AWAY,
+    PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
+}
+_SQ610_PRESET_HOLD_TYPES = {
+    PRESET_OFF: HoldType.STANDBY,
+    PRESET_AWAY: HoldType.AWAY,
     PRESET_PERMANENT_HOLD: HoldType.PERMANENT_HOLD,
 }
 _FAN_COIL_HVAC_MODES = {
@@ -1171,14 +1177,17 @@ class IT600Gateway:
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         preset = _validate_supported_value(preset, "preset", device.preset_modes)
+        if preset == PRESET_SCHEDULE_OVERRIDE:
+            return
         request_data: dict[str, dict[str, Any]]
 
         if is_fan_coil_model(device.model):
+            hold_value = _FAN_COIL_PRESET_HOLD_TYPES.get(
+                preset,
+                HoldType.FOLLOW_SCHEDULE,
+            )
             request_data = {
-                "sComm": {"SetHoldType": _FAN_COIL_PRESET_HOLD_TYPES.get(
-                    preset,
-                    HoldType.FOLLOW_SCHEDULE,
-                )}
+                "sComm": {"SetHoldType": hold_value}
             }
         elif is_trv_model(device.model):
             request_data = {
@@ -1188,11 +1197,12 @@ class IT600Gateway:
                 )}
             }
         elif is_sq610_model(device.model):
+            hold_value = _SQ610_PRESET_HOLD_TYPES.get(
+                preset,
+                HoldType.FOLLOW_SCHEDULE,
+            )
             request_data = {
-                "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: _HEAT_ONLY_PRESET_HOLD_TYPES.get(
-                    preset,
-                    HoldType.FOLLOW_SCHEDULE,
-                )}
+                "sIT600TH": {_SQ610_WRITE_HOLD_TYPE: hold_value}
             }
         else:
             request_data = {

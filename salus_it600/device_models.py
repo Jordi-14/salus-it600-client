@@ -46,7 +46,7 @@ standard models. Key differences:
   `SystemMode` field (3=cool, 4=heat, 5=emergency).
 
 - **Hold type variants**: SQ610 uses hold type 7 for standby (Off), but also
-  supports hold type 0 (auto return to schedule).
+  supports hold type 0 (auto return to schedule) and hold type 6 (Away).
 
 - **Write property names**: SQ610 write property names differ from read names.
   Keep these names private to client gateway methods instead of exposing them to
@@ -134,6 +134,7 @@ SQ610_MODE_EMERGENCY_HEAT = SystemMode.EMERGENCY_HEAT
 
 SQ610_HOLD_AUTO = HoldType.FOLLOW_SCHEDULE
 SQ610_HOLD_PERMANENT = HoldType.PERMANENT_HOLD
+SQ610_HOLD_AWAY = HoldType.AWAY
 SQ610_HOLD_STANDBY = HoldType.STANDBY
 
 SQ610_RUNNING_HEAT = RunningState.HEATING

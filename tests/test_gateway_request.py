@@ -18,11 +18,12 @@ from salus_it600.const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD,
+    PRESET_SCHEDULE_OVERRIDE,
     HoldType,
     RunningState,
     SystemMode,
@@ -144,7 +145,6 @@ def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
             PRESET_OFF,
             PRESET_PERMANENT_HOLD,
             PRESET_ECO,
-            PRESET_TEMPORARY_HOLD,
             PRESET_FOLLOW_SCHEDULE,
         ),
         fan_mode=None,
@@ -461,6 +461,39 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetHoldType": 10}, request["id"][0]["sComm"])
 
+    async def test_set_fc600_schedule_override_rejects_when_not_active(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device("climate-1")
+
+        with self.assertRaises(ValueError):
+            await gateway.set_climate_device_preset(
+                "climate-1",
+                PRESET_SCHEDULE_OVERRIDE,
+            )
+
+        self.assertEqual([], session.post_calls)
+
+    async def test_set_fc600_schedule_override_is_report_only(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = replace(
+            make_climate_device("climate-1"),
+            hold_type=int(HoldType.TEMPORARY_HOLD),
+            preset_mode=PRESET_SCHEDULE_OVERRIDE,
+            preset_modes=(
+                PRESET_OFF,
+                PRESET_PERMANENT_HOLD,
+                PRESET_ECO,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_FOLLOW_SCHEDULE,
+            ),
+        )
+
+        await gateway.set_climate_device_preset("climate-1", PRESET_SCHEDULE_OVERRIDE)
+
+        self.assertEqual([], session.post_calls)
+
     async def test_set_trv3rf_preset_writes_scomm_hold_type(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
@@ -763,6 +796,90 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         gateway._climate_devices["sq610-1"] = replace(
             make_climate_device("sq610-1"),
             model="SQ610RF",
+        )
+
+        await gateway.set_climate_device_preset("sq610-1", PRESET_FOLLOW_SCHEDULE)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 0}, request["id"][0]["sIT600TH"])
+
+    async def test_set_sq610_climate_preset_away_writes_hold_type(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            preset_modes=(
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_AWAY,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
+        )
+
+        await gateway.set_climate_device_preset("sq610-1", PRESET_AWAY)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetHoldType": 6}, request["id"][0]["sIT600TH"])
+
+    async def test_sq610_schedule_override_rejects_when_not_active(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hold_type=int(HoldType.PERMANENT_HOLD),
+            preset_modes=(
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_AWAY,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
+        )
+
+        with self.assertRaises(ValueError):
+            await gateway.set_climate_device_preset(
+                "sq610-1",
+                PRESET_SCHEDULE_OVERRIDE,
+            )
+
+        self.assertEqual([], session.post_calls)
+
+    async def test_sq610_schedule_override_is_report_only(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hold_type=int(HoldType.TEMPORARY_HOLD),
+            preset_mode=PRESET_SCHEDULE_OVERRIDE,
+            preset_modes=(
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_AWAY,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
+        )
+
+        await gateway.set_climate_device_preset("sq610-1", PRESET_SCHEDULE_OVERRIDE)
+
+        self.assertEqual([], session.post_calls)
+
+    async def test_sq610_schedule_override_to_follow_schedule_sends_hold_type_0(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["sq610-1"] = replace(
+            make_climate_device("sq610-1"),
+            model="SQ610RF",
+            hold_type=int(HoldType.TEMPORARY_HOLD),
+            preset_modes=(
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_AWAY,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
         )
 
         await gateway.set_climate_device_preset("sq610-1", PRESET_FOLLOW_SCHEDULE)

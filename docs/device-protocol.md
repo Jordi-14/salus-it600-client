@@ -76,10 +76,15 @@ Use the enums in `salus_it600.const` rather than raw integers:
 
 | Enum | Values |
 | --- | --- |
-| `HoldType` | `FOLLOW_SCHEDULE=0`, `TEMPORARY_HOLD=1`, `PERMANENT_HOLD=2`, `STANDBY=7`, `ECO=10` |
+| `HoldType` | `FOLLOW_SCHEDULE=0`, `TEMPORARY_HOLD=1`, `PERMANENT_HOLD=2`, `AWAY=6`, `STANDBY=7`, `ECO=10` |
 | `SystemMode` | `AUTO=1`, `COOL=3`, `HEAT=4`, `EMERGENCY_HEAT=5` |
 | `RunningState` | `IDLE=0`, `HEATING=1`, `COOLING=2`, `FAN_COIL_HEATING=33`, `FAN_COIL_COOLING=66` |
 | `FanMode` | `OFF=0`, `LOW=1`, `MEDIUM=2`, `HIGH=3`, `AUTO=5` |
+
+`HoldType.TEMPORARY_HOLD` is reported as `Schedule Override` when a thermostat
+is already overriding its schedule. It is not advertised as a normal selectable
+preset when the device is in follow-schedule, permanent-hold, away, or eco
+states.
 
 ## Adding Device Support
 

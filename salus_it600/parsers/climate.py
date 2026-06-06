@@ -22,11 +22,12 @@ from ..const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
-    PRESET_TEMPORARY_HOLD,
+    PRESET_SCHEDULE_OVERRIDE,
     SUPPORT_FAN_MODE,
     SUPPORT_PRESET_MODE,
     SUPPORT_TARGET_TEMPERATURE,
@@ -141,9 +142,41 @@ def _sq610_preset_mode(hold_type: int) -> str:
     """Return the SQ610 preset corresponding to HoldType."""
     if hold_type == HoldType.STANDBY:
         return PRESET_OFF
+    if hold_type == HoldType.AWAY:
+        return PRESET_AWAY
+    if hold_type == HoldType.TEMPORARY_HOLD:
+        return PRESET_SCHEDULE_OVERRIDE
     if hold_type == HoldType.PERMANENT_HOLD:
         return PRESET_PERMANENT_HOLD
     return PRESET_FOLLOW_SCHEDULE
+
+
+def _normalized_preset_modes(
+    base_modes: tuple[str, ...],
+    active_preset: str,
+) -> tuple[str, ...]:
+    """Return presets with the active reported preset included once."""
+    modes = list(base_modes)
+    if active_preset in modes:
+        return tuple(modes)
+    if active_preset == PRESET_SCHEDULE_OVERRIDE and PRESET_FOLLOW_SCHEDULE in modes:
+        modes.insert(modes.index(PRESET_FOLLOW_SCHEDULE) + 1, active_preset)
+    else:
+        modes.append(active_preset)
+    return tuple(modes)
+
+
+def _sq610_preset_modes(hold_type: int) -> tuple[str, ...]:
+    """Return SQ610 presets, adding Schedule Override only while active."""
+    return _normalized_preset_modes(
+        (
+            PRESET_FOLLOW_SCHEDULE,
+            PRESET_PERMANENT_HOLD,
+            PRESET_AWAY,
+            PRESET_OFF,
+        ),
+        _sq610_preset_mode(hold_type),
+    )
 
 
 def _fan_coil_hvac_mode(system_mode: int | None) -> str:
@@ -186,8 +219,21 @@ def _fan_coil_preset_mode(hold_type: int) -> str:
     if hold_type == HoldType.ECO:
         return PRESET_ECO
     if hold_type == HoldType.TEMPORARY_HOLD:
-        return PRESET_TEMPORARY_HOLD
+        return PRESET_SCHEDULE_OVERRIDE
     return PRESET_FOLLOW_SCHEDULE
+
+
+def _fan_coil_preset_modes(hold_type: int) -> tuple[str, ...]:
+    """Return FC600 presets, adding Schedule Override only while active."""
+    return _normalized_preset_modes(
+        (
+            PRESET_FOLLOW_SCHEDULE,
+            PRESET_PERMANENT_HOLD,
+            PRESET_ECO,
+            PRESET_OFF,
+        ),
+        _fan_coil_preset_mode(hold_type),
+    )
 
 
 def _fan_coil_fan_mode(fan_mode: Any) -> str:
@@ -351,7 +397,7 @@ def _parse_sq610_climate_device(
         ),
         hvac_modes=hvac_modes,
         preset_mode=_sq610_preset_mode(hold_type),
-        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        preset_modes=_sq610_preset_modes(hold_type),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status, th),
@@ -408,7 +454,14 @@ def _parse_it600th_climate_device(
         ),
         hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO),
         preset_mode=_heat_only_preset_mode(hold_type),
-        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        preset_modes=_normalized_preset_modes(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
+            _heat_only_preset_mode(hold_type),
+        ),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status, th),
@@ -485,13 +538,7 @@ def _parse_fan_coil_climate_device(
         ),
         hvac_modes=(HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO),
         preset_mode=_fan_coil_preset_mode(hold_type),
-        preset_modes=(
-            PRESET_OFF,
-            PRESET_PERMANENT_HOLD,
-            PRESET_ECO,
-            PRESET_TEMPORARY_HOLD,
-            PRESET_FOLLOW_SCHEDULE,
-        ),
+        preset_modes=_fan_coil_preset_modes(hold_type),
         fan_mode=_fan_coil_fan_mode(fan_mode),
         fan_modes=(
             FAN_MODE_AUTO,
@@ -557,7 +604,14 @@ def _parse_trv_climate_device(
         ),
         hvac_modes=(HVAC_MODE_OFF, HVAC_MODE_HEAT, HVAC_MODE_AUTO),
         preset_mode=_heat_only_preset_mode(hold_type),
-        preset_modes=(PRESET_FOLLOW_SCHEDULE, PRESET_PERMANENT_HOLD, PRESET_OFF),
+        preset_modes=_normalized_preset_modes(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_OFF,
+            ),
+            _heat_only_preset_mode(hold_type),
+        ),
         fan_mode=None,
         fan_modes=None,
         locked=_thermostat_locked(device_status),

@@ -11,10 +11,12 @@ from salus_it600.const import (
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
     PRESET_ECO,
     PRESET_FOLLOW_SCHEDULE,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
+    PRESET_SCHEDULE_OVERRIDE,
     HoldType,
     RunningState,
     SystemMode,
@@ -164,6 +166,88 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(battery)
         self.assertEqual(100, battery.state)
         self.assertEqual("diagnostic", battery.entity_category)
+
+    async def test_sq610_parser_maps_away_hold_type_to_preset(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_away", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2150,
+                            "HeatingSetpoint_x100": 2200,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 3500,
+                            "SystemMode": int(SystemMode.HEAT),
+                            "RunningState": int(RunningState.HEATING),
+                            "HoldType": int(HoldType.AWAY),
+                            "LockKey": 0,
+                            "LockKey_a": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices(
+            [{"data": {"UniID": "sq610_away"}}],
+        )
+
+        device = gateway.get_climate_device("sq610_away")
+        self.assertIsNotNone(device)
+        self.assertEqual(PRESET_AWAY, device.preset_mode)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_AWAY,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
+        self.assertEqual(int(HoldType.AWAY), device.hold_type)
+
+    async def test_sq610_parser_exposes_schedule_override_only_when_active(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_override", "SQ610RF"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2150,
+                            "HeatingSetpoint_x100": 2200,
+                            "MinHeatSetpoint_x100": 500,
+                            "MaxHeatSetpoint_x100": 3500,
+                            "SystemMode": int(SystemMode.HEAT),
+                            "RunningState": int(RunningState.HEATING),
+                            "HoldType": int(HoldType.TEMPORARY_HOLD),
+                            "LockKey": 0,
+                            "LockKey_a": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices(
+            [{"data": {"UniID": "sq610_override"}}],
+        )
+
+        device = gateway.get_climate_device("sq610_override")
+        self.assertIsNotNone(device)
+        self.assertEqual(PRESET_SCHEDULE_OVERRIDE, device.preset_mode)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_AWAY,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
 
     async def test_binary_sensor_parser_uses_model_device_class(self):
         gateway = make_gateway_with_response(
@@ -788,6 +872,15 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(HVAC_MODE_COOL, device.hvac_mode)
         self.assertEqual(CURRENT_HVAC_COOL, device.hvac_action)
         self.assertEqual(PRESET_ECO, device.preset_mode)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_ECO,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
+        )
         self.assertEqual(FAN_MODE_HIGH, device.fan_mode)
         self.assertEqual(23.0, device.target_temperature)
         self.assertEqual(16.0, device.min_temp)
@@ -830,6 +923,43 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                 "OnlineStatus_i": 1,
             },
             device.diagnostic_fields,
+        )
+
+    async def test_fc600_parser_exposes_schedule_override_only_when_active(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("fan_override", "FC600"),
+                        "sTherS": {
+                            "SystemMode": int(SystemMode.HEAT),
+                            "LocalTemperature_x100": 2200,
+                            "HeatingSetpoint_x100": 2100,
+                            "CoolingSetpoint_x100": 2300,
+                            "RunningState": int(RunningState.FAN_COIL_HEATING),
+                        },
+                        "sComm": {"HoldType": int(HoldType.TEMPORARY_HOLD)},
+                        "sFanS": {"FanMode": 5},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "fan_override"}}])
+
+        device = gateway.get_climate_device("fan_override")
+        self.assertIsNotNone(device)
+        self.assertEqual(PRESET_SCHEDULE_OVERRIDE, device.preset_mode)
+        self.assertEqual(
+            (
+                PRESET_FOLLOW_SCHEDULE,
+                PRESET_SCHEDULE_OVERRIDE,
+                PRESET_PERMANENT_HOLD,
+                PRESET_ECO,
+                PRESET_OFF,
+            ),
+            device.preset_modes,
         )
 
     async def test_fc600nh_variant_parsed_as_fan_coil(self):

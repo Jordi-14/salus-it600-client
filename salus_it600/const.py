@@ -43,9 +43,10 @@ CURRENT_HVAC_IDLE = "idle"
 # Supported presets
 PRESET_FOLLOW_SCHEDULE = "Follow Schedule"
 PRESET_PERMANENT_HOLD = "Permanent Hold"
-PRESET_TEMPORARY_HOLD = "Temporary Hold"
+PRESET_SCHEDULE_OVERRIDE = "Schedule Override"
 PRESET_ECO = "Eco"
 PRESET_OFF = "Off"
+PRESET_AWAY = "Away"
 
 # Supported fan modes
 FAN_MODE_AUTO = "Auto"
@@ -61,6 +62,7 @@ class HoldType(IntEnum):
     FOLLOW_SCHEDULE = 0
     TEMPORARY_HOLD = 1
     PERMANENT_HOLD = 2
+    AWAY = 6
     STANDBY = 7
     ECO = 10
 
