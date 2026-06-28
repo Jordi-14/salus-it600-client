@@ -182,13 +182,15 @@ class TestClimateModel(unittest.TestCase):
                 self.assertTrue(running_state_is_cooling(running_state))
                 self.assertFalse(running_state_is_heating(running_state))
 
-        for running_state in (1, 5, 33, 65):
+        for running_state in (1, 5, 33, 65, 129, 193):
             with self.subTest(running_state=running_state):
                 self.assertTrue(running_state_is_heating(running_state))
                 self.assertFalse(running_state_is_cooling(running_state))
 
         self.assertFalse(running_state_is_heating(RunningState.IDLE))
         self.assertFalse(running_state_is_cooling(RunningState.IDLE))
+        self.assertFalse(running_state_is_heating(192))
+        self.assertFalse(running_state_is_cooling(192))
         self.assertFalse(running_state_is_heating(None))
         self.assertFalse(running_state_is_cooling(None))
 

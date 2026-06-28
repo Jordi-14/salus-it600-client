@@ -933,6 +933,8 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
             (5, CURRENT_HVAC_HEAT),
             (33, CURRENT_HVAC_HEAT),
             (65, CURRENT_HVAC_HEAT),
+            (129, CURRENT_HVAC_HEAT),
+            (193, CURRENT_HVAC_HEAT),
         ):
             with self.subTest(running_state=running_state):
                 system_mode = (
