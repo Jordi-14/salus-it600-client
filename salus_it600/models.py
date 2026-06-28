@@ -83,6 +83,22 @@ def normalized_running_state(
     return running_state if running_state is not None else default
 
 
+def running_state_is_heating(value: Any) -> bool:
+    """Return whether the running-state heating bit is set."""
+    running_state = normalized_running_state(value, default=None)
+    return running_state is not None and running_state >= 0 and bool(
+        running_state & int(RunningState.HEATING)
+    )
+
+
+def running_state_is_cooling(value: Any) -> bool:
+    """Return whether the running-state cooling bit is set."""
+    running_state = normalized_running_state(value, default=None)
+    return running_state is not None and running_state >= 0 and bool(
+        running_state & int(RunningState.COOLING)
+    )
+
+
 def normalized_temperature_value(
     value: Any,
     *,
@@ -118,25 +134,16 @@ def active_climate_system_mode(
 ) -> int | None:
     """Return the heat/cool system mode implied by normalized climate state."""
     normalized_mode = normalized_system_mode(system_mode)
-    running_value = normalized_running_state(running_state, default=None)
-    cooling_running_states = {
-        int(RunningState.COOLING),
-        int(RunningState.FAN_COIL_COOLING),
-    }
-    heating_running_states = {
-        int(RunningState.HEATING),
-        int(RunningState.FAN_COIL_HEATING),
-    }
     if (
         normalized_mode == int(SystemMode.COOL)
         or hvac_mode == HVAC_MODE_COOL
-        or running_value in cooling_running_states
+        or running_state_is_cooling(running_state)
     ):
         return int(SystemMode.COOL)
     if (
         normalized_mode in {int(SystemMode.HEAT), int(SystemMode.EMERGENCY_HEAT)}
         or hvac_mode == HVAC_MODE_HEAT
-        or running_value in heating_running_states
+        or running_state_is_heating(running_state)
     ):
         return int(SystemMode.HEAT)
     return normalized_mode
@@ -204,9 +211,7 @@ def sq610_cooling_capability_source(
         return "cooling_control"
     if normalized_system_mode(system_mode) == int(SystemMode.COOL):
         return "active_system_mode"
-    if normalized_running_state(running_state, default=None) == int(
-        RunningState.COOLING
-    ):
+    if running_state_is_cooling(running_state):
         return "active_running_state"
     if known_model_supports_cooling:
         return "known_model"

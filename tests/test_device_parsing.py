@@ -925,6 +925,50 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
             device.diagnostic_fields,
         )
 
+    async def test_fc600_running_state_fan_stage_bitmask_maps_action(self):
+        for running_state, expected_action in (
+            (6, CURRENT_HVAC_COOL),
+            (34, CURRENT_HVAC_COOL),
+            (66, CURRENT_HVAC_COOL),
+            (5, CURRENT_HVAC_HEAT),
+            (33, CURRENT_HVAC_HEAT),
+            (65, CURRENT_HVAC_HEAT),
+        ):
+            with self.subTest(running_state=running_state):
+                system_mode = (
+                    int(SystemMode.COOL)
+                    if expected_action == CURRENT_HVAC_COOL
+                    else int(SystemMode.HEAT)
+                )
+                gateway = make_gateway_with_response(
+                    {
+                        "status": "success",
+                        "id": [
+                            {
+                                **common_detail(f"fan_{running_state}", "FC600"),
+                                "sTherS": {
+                                    "SystemMode": system_mode,
+                                    "LocalTemperature_x100": 2420,
+                                    "HeatingSetpoint_x100": 2100,
+                                    "CoolingSetpoint_x100": 2300,
+                                    "RunningState": running_state,
+                                },
+                                "sComm": {"HoldType": int(HoldType.PERMANENT_HOLD)},
+                                "sFanS": {"FanMode": 3},
+                            }
+                        ],
+                    }
+                )
+
+                await gateway._refresh_climate_devices(
+                    [{"data": {"UniID": f"fan_{running_state}"}}],
+                )
+
+                device = gateway.get_climate_device(f"fan_{running_state}")
+                self.assertIsNotNone(device)
+                self.assertEqual(expected_action, device.hvac_action)
+                self.assertEqual(running_state, device.running_state)
+
     async def test_fc600_parser_exposes_schedule_override_only_when_active(self):
         gateway = make_gateway_with_response(
             {

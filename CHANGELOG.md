@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1b1 - 2026-06-28
+
+Beta bug fixes:
+
+- Treat `RunningState` as a bitmask when deriving active heat/cool state, so
+  FC600 fan-stage values such as `6`, `34`, and `66` report cooling instead of
+  idle.
+
 ## 0.6.0 - 2026-05-23
 
 Device support:

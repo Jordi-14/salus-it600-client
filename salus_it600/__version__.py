@@ -1,3 +1,3 @@
 """Asynchronous Python client for Salus iT600 smart devices."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1b1"
