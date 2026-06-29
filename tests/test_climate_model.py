@@ -28,6 +28,8 @@ from salus_it600.models import (
     normalized_system_mode,
     normalized_temperature_range,
     normalized_temperature_value,
+    running_state_is_cooling,
+    running_state_is_heating,
     sq610_cooling_capability_source,
     sq610_supports_cooling,
 )
@@ -174,6 +176,24 @@ class TestClimateModel(unittest.TestCase):
             ),
         )
 
+    def test_running_state_helpers_treat_fan_stage_values_as_bitmasks(self):
+        for running_state in (2, 6, 34, 66):
+            with self.subTest(running_state=running_state):
+                self.assertTrue(running_state_is_cooling(running_state))
+                self.assertFalse(running_state_is_heating(running_state))
+
+        for running_state in (1, 5, 33, 65, 129, 193):
+            with self.subTest(running_state=running_state):
+                self.assertTrue(running_state_is_heating(running_state))
+                self.assertFalse(running_state_is_cooling(running_state))
+
+        self.assertFalse(running_state_is_heating(RunningState.IDLE))
+        self.assertFalse(running_state_is_cooling(RunningState.IDLE))
+        self.assertFalse(running_state_is_heating(192))
+        self.assertFalse(running_state_is_cooling(192))
+        self.assertFalse(running_state_is_heating(None))
+        self.assertFalse(running_state_is_cooling(None))
+
     def test_active_temperature_range_uses_system_mode_with_fallbacks(self):
         self.assertEqual(
             (10.0, 30.0),
@@ -259,7 +279,7 @@ class TestClimateModel(unittest.TestCase):
             (
                 {
                     "system_mode": SystemMode.HEAT,
-                    "running_state": RunningState.COOLING,
+                    "running_state": 34,
                 },
                 "active_running_state",
             ),

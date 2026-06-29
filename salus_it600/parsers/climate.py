@@ -50,6 +50,8 @@ from ..models import (
     climate_diagnostic_fields,
     normalized_running_state,
     normalized_system_mode,
+    running_state_is_cooling,
+    running_state_is_heating,
     sq610_cooling_capability_source,
     sq610_supports_cooling,
 )
@@ -118,7 +120,7 @@ def _sq610_hvac_mode(
     """Return the SQ610 Home Assistant-style HVAC mode."""
     if hold_type == HoldType.STANDBY:
         return HVAC_MODE_OFF
-    if system_mode == SystemMode.COOL or running_state == RunningState.COOLING:
+    if system_mode == SystemMode.COOL or running_state_is_cooling(running_state):
         return HVAC_MODE_COOL
     return HVAC_MODE_HEAT
 
@@ -131,9 +133,9 @@ def _sq610_hvac_action(
     """Return the SQ610 current action from its hold and running state."""
     if hold_type == HoldType.STANDBY:
         return CURRENT_HVAC_OFF
-    if running_state == RunningState.HEATING:
+    if running_state_is_heating(running_state):
         return CURRENT_HVAC_HEAT
-    if running_state == RunningState.COOLING:
+    if running_state_is_cooling(running_state):
         return CURRENT_HVAC_COOL
     return CURRENT_HVAC_IDLE
 
@@ -199,9 +201,9 @@ def _fan_coil_hvac_action(
         return CURRENT_HVAC_OFF
     if running_state == RunningState.IDLE:
         return CURRENT_HVAC_IDLE
-    if running_state == RunningState.FAN_COIL_HEATING:
+    if running_state_is_heating(running_state):
         return CURRENT_HVAC_HEAT
-    if running_state == RunningState.FAN_COIL_COOLING:
+    if running_state_is_cooling(running_state):
         return CURRENT_HVAC_COOL
     if system_mode == SystemMode.HEAT:
         return CURRENT_HVAC_HEAT_IDLE
