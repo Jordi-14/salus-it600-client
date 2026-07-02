@@ -1,4 +1,12 @@
-"""AES-256-CCM protocol for newer Salus UG800 gateway firmware."""
+"""AES-256-CCM protocol for newer Salus UG800 gateway firmware.
+
+The key derivation (EUID bytes + fixed suffix) and 8-byte nonce layout
+(3 random + 2 counter + 3 timestamp bytes) below are dictated by the UG800
+firmware and are reproduced here for interoperability only. They are NOT design
+choices and MUST NOT be "hardened": the gateway expects exactly this scheme, so
+any change silently breaks all local communication. The nonce is transmitted
+alongside the ciphertext and AESCCM verifies the authentication tag on decrypt.
+"""
 
 from __future__ import annotations
 
