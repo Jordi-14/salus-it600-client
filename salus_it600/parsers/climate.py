@@ -63,6 +63,12 @@ from .common import (
     _voltage_to_battery_pct,
 )
 
+# Field offsets into the sIT600TH "Status_d" status string (fixed vendor firmware
+# layout). The floor-temperature reading is the 4 digits at [12:16] scaled by
+# TEMPERATURE_SCALE; the battery level is the single digit at index 99.
+STATUS_D_FLOOR_TEMPERATURE_SLICE = slice(12, 16)
+STATUS_D_BATTERY_INDEX = 99
+
 
 def _climate_common_args(
     device_status: dict[str, Any],
@@ -662,7 +668,7 @@ def parse_climate_sensor_devices(
         status_d = th.get("Status_d", "")
         if th.get("OUTSensorProbe") == 1 and isinstance(status_d, str):
             try:
-                floor_temp_raw = int(status_d[12:16])
+                floor_temp_raw = int(status_d[STATUS_D_FLOOR_TEMPERATURE_SLICE])
             except (ValueError, IndexError):
                 floor_temp_raw = 0
             if 0 < floor_temp_raw <= 10000:
@@ -678,9 +684,9 @@ def parse_climate_sensor_devices(
                     )
                 )
 
-        if model in BATTERY_OEM_MODELS and isinstance(status_d, str) and len(status_d) > 99:
+        if model in BATTERY_OEM_MODELS and isinstance(status_d, str) and len(status_d) > STATUS_D_BATTERY_INDEX:
             try:
-                raw_battery = int(status_d[99])
+                raw_battery = int(status_d[STATUS_D_BATTERY_INDEX])
             except (ValueError, IndexError):
                 raw_battery = -1
             if 0 <= raw_battery <= 5:

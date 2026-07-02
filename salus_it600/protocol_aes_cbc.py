@@ -1,4 +1,11 @@
-"""AES-CBC protocol for Salus iT600 local gateway communication."""
+"""AES-CBC protocol for Salus iT600 local gateway communication.
+
+The scheme below (fixed IV, MD5-derived key from ``Salus-<euid>``, PKCS7 padding)
+is dictated by the legacy UGE600/UG800 gateway firmware and is reproduced here
+for interoperability only. It is NOT a design choice and MUST NOT be "hardened"
+(random IV, SHA-256/KDF, etc.): the gateway on the other end expects exactly this
+scheme, so any change silently breaks all local communication.
+"""
 
 from __future__ import annotations
 
