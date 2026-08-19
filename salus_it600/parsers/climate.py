@@ -61,6 +61,7 @@ from .common import (
     _common_device_args,
     _hold_type,
     _humidity_percent,
+    _signal_sensor_devices,
     _temperature_from_x100,
     _voltage_to_battery_pct,
 )
@@ -650,7 +651,9 @@ def parse_climate_sensor_devices(
     """Parse child sensors exposed by a climate payload."""
     unique_id = climate_device.unique_id
     model = climate_device.model
-    sensors: list[SensorDevice] = []
+    sensors: list[SensorDevice] = _signal_sensor_devices(
+        device_status, unique_id, climate_device.name
+    )
 
     if climate_device.current_humidity is not None:
         sensors.append(

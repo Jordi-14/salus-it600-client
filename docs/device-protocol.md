@@ -43,6 +43,12 @@ Detailed device payloads normally include:
 | `sBasicS.ManufactureName` | Manufacturer, usually `SALUS` |
 | `DeviceL.ModelIdentifier_i` | Detailed model identifier |
 
+`sIT600I.LastMessageRSSI_d` (dBm) and `sIT600I.LastMessageLQI_d` (0-255) appear
+on several device families, but only for devices the coordinator heard from
+directly on that particular poll. They are intermittently absent on otherwise
+healthy, online devices; a missing value must not be treated as a fault or
+reported as zero.
+
 ## Climate Fields
 
 ### iT600TH / SQ610

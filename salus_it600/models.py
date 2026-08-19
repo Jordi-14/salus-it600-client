@@ -380,7 +380,7 @@ class SensorDevice(NamedTuple):
     unique_id: str
     state: Any
     unit_of_measurement: str
-    device_class: str
+    device_class: str | None
     data: DeviceData
     manufacturer: str
     model: str | None

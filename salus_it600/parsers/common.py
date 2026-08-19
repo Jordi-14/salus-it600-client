@@ -159,7 +159,7 @@ def _child_sensor_device(
     *,
     state: Any,
     unit_of_measurement: str,
-    device_class: str,
+    device_class: str | None,
     parent_unique_id: str,
     entity_category: str | None = None,
 ) -> SensorDevice:
@@ -172,6 +172,58 @@ def _child_sensor_device(
         parent_unique_id=parent_unique_id,
         entity_category=entity_category,
     )
+
+
+def _signal_sensor_devices(
+    device_status: dict[str, Any],
+    base_unique_id: str,
+    parent_name: str,
+) -> list[SensorDevice]:
+    """Return RSSI/LQI diagnostic sensors when the gateway reports them.
+
+    `sIT600I.LastMessageRSSI_d` / `LastMessageLQI_d` are only populated for
+    devices the coordinator heard from directly on a given poll, so they are
+    intermittently absent even on healthy, online devices. A missing value
+    must not be reported as a fault or coerced to zero -- the sensor is simply
+    omitted from that refresh.
+    """
+    sit600i = device_status.get("sIT600I")
+    if not isinstance(sit600i, dict):
+        return []
+
+    sensors: list[SensorDevice] = []
+
+    rssi = sit600i.get("LastMessageRSSI_d")
+    if isinstance(rssi, int) and not isinstance(rssi, bool):
+        sensors.append(
+            _child_sensor_device(
+                device_status,
+                f"{base_unique_id}_rssi",
+                f"{parent_name} Signal strength",
+                state=rssi,
+                unit_of_measurement="dBm",
+                device_class="signal_strength",
+                parent_unique_id=base_unique_id,
+                entity_category="diagnostic",
+            )
+        )
+
+    lqi = sit600i.get("LastMessageLQI_d")
+    if isinstance(lqi, int) and not isinstance(lqi, bool):
+        sensors.append(
+            _child_sensor_device(
+                device_status,
+                f"{base_unique_id}_lqi",
+                f"{parent_name} Link quality",
+                state=lqi,
+                unit_of_measurement="",
+                device_class=None,
+                parent_unique_id=base_unique_id,
+                entity_category="diagnostic",
+            )
+        )
+
+    return sensors
 
 
 def _child_binary_sensor_device(

@@ -1264,6 +1264,72 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                 [{"data": {"UniID": "switch_1", "Endpoint": 2}}],
             )
 
+    async def test_climate_reports_signal_strength_and_link_quality_when_present(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_1", "SQ610RFNH"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                        },
+                        "sIT600I": {
+                            "CommandResponse_d": "4233343e",
+                            "LastMessageRSSI_d": -58,
+                            "LastMessageLQI_d": 255,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+
+        rssi = gateway.get_sensor_device("sq610_1_rssi")
+        lqi = gateway.get_sensor_device("sq610_1_lqi")
+        self.assertIsNotNone(rssi)
+        self.assertEqual(-58, rssi.state)
+        self.assertEqual("dBm", rssi.unit_of_measurement)
+        self.assertEqual("signal_strength", rssi.device_class)
+        self.assertEqual("diagnostic", rssi.entity_category)
+        self.assertIsNotNone(lqi)
+        self.assertEqual(255, lqi.state)
+        self.assertIsNone(lqi.device_class)
+
+    async def test_climate_signal_sensors_absent_when_not_heard_directly(self):
+        # `sIT600I.LastMessageRSSI_d`/`LastMessageLQI_d` are only populated for
+        # devices the coordinator heard from directly on a given poll. A
+        # healthy, fully online thermostat can still omit them.
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("sq610_1", "SQ610RFNH"),
+                        "sIT600TH": {
+                            "LocalTemperature_x100": 2015,
+                            "HeatingSetpoint_x100": 2100,
+                            "HoldType": 2,
+                            "RunningState": 0,
+                        },
+                        "sIT600I": {"CommandResponse_d": "424131013c"},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+
+        device = gateway.get_climate_device("sq610_1")
+        self.assertIsNotNone(device)
+        self.assertTrue(device.available)
+        self.assertIsNone(gateway.get_sensor_device("sq610_1_rssi"))
+        self.assertIsNone(gateway.get_sensor_device("sq610_1_lqi"))
+
 
 if __name__ == "__main__":
     unittest.main()

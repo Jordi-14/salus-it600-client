@@ -28,6 +28,8 @@ fields for diagnostics.
 | Battery | Status_d (SQ610RF) and voltage curves (TRV, window/door sensors) |
 | Power (W) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
 | Energy (kWh) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
+| Signal strength (dBm) | `sIT600I.LastMessageRSSI_d`, when the coordinator heard the device directly on that poll |
+| Link quality | `sIT600I.LastMessageLQI_d` (0-255), same availability as signal strength |
 
 ### Binary sensors
 
