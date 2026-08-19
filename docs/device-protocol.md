@@ -28,6 +28,7 @@ encrypted requests with one `asyncio.Lock`.
 | Sensor | `sTempS` | Temperature sensor |
 | Switch | `sOnOffS` | Relay switch or outlet |
 | Cover | `sLevelS` | Roller shutter/blind level |
+| Wiring centre | `sIT600WC` | it600WC fault registers, no valve/relay state |
 
 ## Common Fields
 
@@ -78,6 +79,17 @@ device rather than the presence of the field.
 | `sComm.HoldType` | Preset/hold state |
 | `sFanS.FanMode` | Fan speed |
 | `sTherUIS.LockKey` | Child lock state |
+
+## Wiring Centre (it600WC)
+
+The it600WC has no valve/relay state of its own in its payload -- it is a
+fault-register bank paired with SQ610-family thermostats on a hydronic
+system, and the single point of failure for every zone it serves.
+
+| Field | Meaning |
+| --- | --- |
+| `sIT600WC.Error10`..`Error20`, `Error26`..`Error29` | Fault register bank. Meanings are not documented anywhere the client has found; the parser reports them by register name (see `THERMOSTAT_ERROR_CODES` in `salus_it600/const.py`, shared with the thermostat-side Error01-32 codes) |
+| `sIT600WC.ErrorCodeWC_d` | Hex-string summary fault code, `"0000"` at baseline. `bool("0000")` is `True` in Python -- check `str(value).strip("0")` instead, the same pattern `parse_climate_binary_sensor_devices` uses for `sComm.DeviceErrorCode` |
 
 ## Protocol Enums
 

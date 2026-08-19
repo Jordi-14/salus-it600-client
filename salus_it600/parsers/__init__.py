@@ -17,6 +17,11 @@ from .sensor import (
     parse_sensor_devices,
 )
 from .switch import parse_switch_device, parse_switch_sensor_devices
+from .wiring_centre import (
+    parse_wiring_centre_binary_sensor_devices,
+    parse_wiring_centre_device,
+    parse_wiring_centre_sensor_devices,
+)
 
 __all__ = [
     "PARSING_EXCEPTIONS",
@@ -31,4 +36,7 @@ __all__ = [
     "parse_sensor_devices",
     "parse_switch_device",
     "parse_switch_sensor_devices",
+    "parse_wiring_centre_binary_sensor_devices",
+    "parse_wiring_centre_device",
+    "parse_wiring_centre_sensor_devices",
 ]

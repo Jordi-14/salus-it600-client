@@ -50,6 +50,8 @@ availability and disappear with it.
 | Thermostat problem | Aggregated error flags (Error01–Error32) with descriptions |
 | Battery problem | Battery-specific error flags (battery models only) |
 | Open window | TRV open-window detection (`sComm.OpenWindowStatus`) |
+| Wiring centre connectivity | it600WC online status |
+| Wiring centre problem | it600WC fault registers (Error10-20, Error26-29, `ErrorCodeWC_d`) |
 
 ### Covers
 
@@ -62,6 +64,14 @@ Smart plugs and relays (SP600, SPE600, SR600, and RS600 relay endpoints): on/off
 ### RS600 notes
 
 RS600 is a multifunction physical device. Depending on gateway payloads and installation mode, it can expose a cover surface through `sLevelS` and separate relay switch endpoints through `sOnOffS`. The client keeps these capabilities separate so Home Assistant can decide how to present them.
+
+### it600WC notes
+
+The it600WC wiring centre has no valve/relay state of its own in its gateway
+payload -- it is a fault-register bank paired with SQ610-family thermostats on
+a hydronic system, and the single point of failure for every zone it serves.
+It is exposed as connectivity and problem binary sensors, plus signal-quality
+sensors when available, rather than a controllable entity.
 
 ## Installation
 
@@ -108,7 +118,7 @@ Rejected attempts are identified by a characteristic 33-byte reject frame (trail
 
 ## Supported devices
 
-SQ610RF, SQ610RF(WB), SQ610RFNH, SQ610RFNH(WB), FC600, TRV3RF, it600MINITRV, it600Receiver, SP600, SPE600, SR600, RS600, SW600, OS600, WLS600, SmokeSensor-EM, SD600, TS600, RE600, RE10B, PS600, ECM600.
+SQ610RF, SQ610RF(WB), SQ610RFNH, SQ610RFNH(WB), FC600, TRV3RF, it600MINITRV, it600Receiver, it600WC, SP600, SPE600, SR600, RS600, SW600, OS600, WLS600, SmokeSensor-EM, SD600, TS600, RE600, RE10B, PS600, ECM600.
 
 ### Unsupported
 
