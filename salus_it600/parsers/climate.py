@@ -55,6 +55,7 @@ from ..models import (
     sq610_cooling_capability_source,
     sq610_supports_cooling,
 )
+from .advanced_settings import parse_advanced_settings
 from .common import (
     _child_binary_sensor_device,
     _child_sensor_device,
@@ -427,6 +428,7 @@ def _parse_sq610_climate_device(
         online_status=online_status,
         cooling_capability_source=cooling_capability_source,
         diagnostic_fields=climate_diagnostic_fields(diagnostic_payload),
+        advanced_settings=parse_advanced_settings(th),
     )
 
 
@@ -489,6 +491,7 @@ def _parse_it600th_climate_device(
         diagnostic_fields=climate_diagnostic_fields(
             _climate_diagnostic_payload(device_status, th),
         ),
+        advanced_settings=parse_advanced_settings(th),
     )
 
 

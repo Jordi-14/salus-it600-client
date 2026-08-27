@@ -256,6 +256,61 @@ class GatewayDevice(NamedTuple):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ThermostatAdvancedSettings:
+    """Decoded SQ610-family "Advanced Settings", read-only.
+
+    Every field of the vendor app's per-thermostat Advanced Settings screen is
+    packed into one 77-byte blob on the wire (see
+    `salus_it600.parsers.advanced_settings`). Fields are None when the blob
+    does not prove a decodable value; `standby_cooling_setpoint` is also None
+    when the thermostat reports it as Off rather than a temperature.
+
+    Enum-coded fields keep their raw integer values; interpret them with the
+    matching enums and maps in `salus_it600.const` (`ControlAlgorithm`,
+    `TrvCalibrationMode`, `S1S2Function`, `InternalRelayFunction`,
+    `RelayContactType`, `ComfortWarmFloorLevel`, `TemperatureDisplayUnit`,
+    `COOLING_CONTROL_SPAN_DEGREES`, `DISPLAY_RESOLUTION_DEGREES`).
+
+    Fields are declared in wire byte order. Temperatures are degrees Celsius,
+    minimum-off times are seconds. `language` is a raw index into the vendor
+    app's language list (0=English and 1=Dansk observed; the full list is not
+    confirmed, so no names are assigned).
+    """
+
+    display_time_on_lcd: bool | None = None
+    temperature_calibration: float | None = None
+    display_humidity_on_lcd: bool | None = None
+    standby_heating_setpoint: float | None = None
+    standby_cooling_setpoint: float | None = None
+    temperature_display_unit: int | None = None
+    display_resolution: int | None = None
+    control_algorithm: int | None = None
+    cooling_control_span: int | None = None
+    trv_calibration_mode: int | None = None
+    s1_s2_function: int | None = None
+    max_floor_temp_heating: float | None = None
+    min_floor_temp_heating: float | None = None
+    min_floor_temp_cooling: float | None = None
+    max_heating_setpoint: float | None = None
+    min_heating_setpoint: float | None = None
+    max_cooling_setpoint: float | None = None
+    min_cooling_setpoint: float | None = None
+    valve_protection: bool | None = None
+    internal_relay_function: int | None = None
+    relay_contact_type: int | None = None
+    min_off_time_heating: int | None = None
+    min_off_time_cooling: int | None = None
+    optimum_start: bool | None = None
+    optimum_stop: bool | None = None
+    comfort_warm_floor: int | None = None
+    language: int | None = None
+    pin_required_to_unlock: bool | None = None
+    display_floor_temperature_on_lcd: bool | None = None
+    unlock_from_thermostat_enabled: bool | None = None
+    adjust_setpoint_when_locked_allowed: bool | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ClimateDevice:
     """Normalized climate device state.
 
@@ -306,6 +361,7 @@ class ClimateDevice:
     online_status: int | None = None
     cooling_capability_source: CoolingCapabilitySource = "none"
     diagnostic_fields: dict[str, Any] | None = None
+    advanced_settings: ThermostatAdvancedSettings | None = None
 
     def __post_init__(self) -> None:
         """Normalize mutable constructor inputs for a frozen snapshot."""

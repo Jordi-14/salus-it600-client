@@ -96,6 +96,92 @@ class FanMode(IntEnum):
     AUTO = 5
 
 
+class ControlAlgorithm(IntEnum):
+    """SQ610 heating control-algorithm values from the advanced-settings blob.
+
+    Values 3, 4, 6, 7, and 8 are On-Off hysteresis-span variants used by
+    other (non-SQ610) models sharing the vendor settings table; they stay
+    raw integers because their exact spans were not independently confirmed.
+    """
+
+    ITLC_UNDERFLOOR = 0
+    ITLC_RADIATORS = 1
+    ITLC_ELECTRICAL = 2
+    THB_ACTUATOR = 5
+
+
+class TrvCalibrationMode(IntEnum):
+    """SQ610 paired-TRV advanced-calibration values."""
+
+    STANDARD_ON_OFF = 3
+    AUTO_SELECTION = 4
+    ADVANCED_SELF_LEARNING = 5
+
+
+class S1S2Function(IntEnum):
+    """SQ610 S1/S2 input-terminal function values."""
+
+    DISABLED = 0
+    FLOOR_SENSOR = 1
+    EXTERNAL_SENSOR = 2
+    OCCUPANCY_SENSOR = 3
+    RUN_ONETOUCH = 4
+    CHANGEOVER = 5
+
+
+class InternalRelayFunction(IntEnum):
+    """SQ610 internal-relay function values."""
+
+    DISABLED = 0
+    HEAT_AND_COOL = 1
+    HEAT_ONLY = 2
+    COOL_ONLY = 3
+
+
+class RelayContactType(IntEnum):
+    """SQ610 internal-relay contact wiring values."""
+
+    NO_COM = 0
+    NC_COM = 1
+
+
+class ComfortWarmFloorLevel(IntEnum):
+    """SQ610 Comfort Warm Floor level values.
+
+    LEVEL_3 comes from the vendor app's option list; unlike the other levels
+    it was not independently confirmed by live A/B toggling.
+    """
+
+    DISABLED = 0
+    LEVEL_1 = 1
+    LEVEL_2 = 2
+    LEVEL_3 = 3
+
+
+class TemperatureDisplayUnit(IntEnum):
+    """SQ610 LCD temperature-unit values."""
+
+    CELSIUS = 0
+    FAHRENHEIT = 1
+
+
+# Cooling hysteresis span (plus/minus degrees Celsius) per raw SQ610
+# cooling-control code from the advanced-settings blob.
+COOLING_CONTROL_SPAN_DEGREES: dict[int, float] = {
+    1: 0.25,
+    2: 0.5,
+    6: 1.0,
+    7: 1.5,
+    8: 2.0,
+}
+
+# LCD temperature resolution in degrees per raw SQ610 display-resolution code.
+DISPLAY_RESOLUTION_DEGREES: dict[int, float] = {
+    0: 0.5,
+    1: 0.1,
+}
+
+
 BATTERY_LEVEL_MAP: dict[int, int] = {
     0: 0,
     1: 10,
