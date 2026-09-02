@@ -11,12 +11,12 @@ from .exceptions import (
 )
 
 __all__ = [
-    "__version__",
     "IT600AuthenticationError",
     "IT600CommandError",
     "IT600ConnectionError",
-    "IT600UnsupportedFirmwareError",
     "IT600Gateway",
+    "IT600UnsupportedFirmwareError",
+    "__version__",
 ]
 
 

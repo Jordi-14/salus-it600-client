@@ -19,8 +19,8 @@ from salus_it600.const import (
 )
 from salus_it600.models import (
     ClimateDevice,
-    active_climate_system_mode,
     active_climate_setpoint,
+    active_climate_system_mode,
     active_temperature_range,
     climate_diagnostic_fields,
     normalized_hold_type,

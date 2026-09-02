@@ -28,6 +28,14 @@ fields for diagnostics.
 | Battery | Status_d (SQ610RF) and voltage curves (TRV, window/door sensors) |
 | Power (W) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
 | Energy (kWh) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
+| Signal strength (dBm) | Thermostats and TRVs (`sIT600I.LastMessageRSSI_d`) |
+| Link quality | Thermostats and TRVs (`sIT600I.LastMessageLQI_d`, 0-255) |
+
+Signal strength and link quality are diagnostic children of the thermostat or
+TRV they belong to. The gateway only fills those fields in for devices the
+coordinator heard from directly on a given poll, so the last known reading is
+kept for as long as the parent device is reported; both follow the parent's
+availability and disappear with it.
 
 ### Binary sensors
 
