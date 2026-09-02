@@ -38,6 +38,20 @@ def make_gateway_with_response(response: dict) -> IT600Gateway:
     return gateway
 
 
+def make_gateway_with_responses(*responses: dict) -> IT600Gateway:
+    """Create a gateway that returns one queued response per request."""
+    gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128", session=object())
+    pending_responses = list(responses)
+
+    async def fake_request(command: str, request_body: dict) -> dict:
+        if not pending_responses:
+            raise AssertionError("No fake gateway response queued")
+        return pending_responses.pop(0)
+
+    gateway._make_encrypted_request = fake_request
+    return gateway
+
+
 def common_detail(unique_id: str, model: str) -> dict:
     """Return common fields for detailed device payloads."""
     return {
@@ -47,6 +61,26 @@ def common_detail(unique_id: str, model: str) -> dict:
         "sBasicS": {"ManufactureName": "SALUS"},
         "DeviceL": {"ModelIdentifier_i": model},
     }
+
+
+def sq610_signal_response(sit600i: dict | None = None, online: int = 1) -> dict:
+    """Return one SQ610 detail response, optionally carrying an sIT600I block."""
+    detail = {
+        **common_detail("sq610_1", "SQ610RFNH"),
+        "sZDOInfo": {"OnlineStatus_i": online},
+        "sIT600TH": {
+            "LocalTemperature_x100": 2015,
+            "HeatingSetpoint_x100": 2100,
+            "HoldType": 2,
+            "RunningState": 0,
+        },
+    }
+    if sit600i is not None:
+        detail["sIT600I"] = sit600i
+    return {"status": "success", "id": [detail]}
+
+
+SQ610_REQUEST = [{"data": {"UniID": "sq610_1"}}]
 
 
 class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
@@ -1266,28 +1300,16 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
 
     async def test_climate_reports_signal_strength_and_link_quality_when_present(self):
         gateway = make_gateway_with_response(
-            {
-                "status": "success",
-                "id": [
-                    {
-                        **common_detail("sq610_1", "SQ610RFNH"),
-                        "sIT600TH": {
-                            "LocalTemperature_x100": 2015,
-                            "HeatingSetpoint_x100": 2100,
-                            "HoldType": 2,
-                            "RunningState": 0,
-                        },
-                        "sIT600I": {
-                            "CommandResponse_d": "4233343e",
-                            "LastMessageRSSI_d": -58,
-                            "LastMessageLQI_d": 255,
-                        },
-                    }
-                ],
-            }
+            sq610_signal_response(
+                {
+                    "CommandResponse_d": "4233343e",
+                    "LastMessageRSSI_d": -58,
+                    "LastMessageLQI_d": 255,
+                }
+            )
         )
 
-        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
 
         rssi = gateway.get_sensor_device("sq610_1_rssi")
         lqi = gateway.get_sensor_device("sq610_1_lqi")
@@ -1296,37 +1318,96 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("dBm", rssi.unit_of_measurement)
         self.assertEqual("signal_strength", rssi.device_class)
         self.assertEqual("diagnostic", rssi.entity_category)
+        self.assertEqual("sq610_1", rssi.parent_unique_id)
         self.assertIsNotNone(lqi)
         self.assertEqual(255, lqi.state)
+        self.assertIsNone(lqi.unit_of_measurement)
         self.assertIsNone(lqi.device_class)
 
-    async def test_climate_signal_sensors_absent_when_not_heard_directly(self):
+    async def test_climate_signal_sensors_absent_until_first_reported(self):
         # `sIT600I.LastMessageRSSI_d`/`LastMessageLQI_d` are only populated for
         # devices the coordinator heard from directly on a given poll. A
-        # healthy, fully online thermostat can still omit them.
+        # healthy, fully online thermostat can still omit them, and with no
+        # earlier reading to fall back on there is nothing to expose yet.
         gateway = make_gateway_with_response(
-            {
-                "status": "success",
-                "id": [
-                    {
-                        **common_detail("sq610_1", "SQ610RFNH"),
-                        "sIT600TH": {
-                            "LocalTemperature_x100": 2015,
-                            "HeatingSetpoint_x100": 2100,
-                            "HoldType": 2,
-                            "RunningState": 0,
-                        },
-                        "sIT600I": {"CommandResponse_d": "424131013c"},
-                    }
-                ],
-            }
+            sq610_signal_response({"CommandResponse_d": "424131013c"})
         )
 
-        await gateway._refresh_climate_devices([{"data": {"UniID": "sq610_1"}}])
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
 
         device = gateway.get_climate_device("sq610_1")
         self.assertIsNotNone(device)
         self.assertTrue(device.available)
+        self.assertIsNone(gateway.get_sensor_device("sq610_1_rssi"))
+        self.assertIsNone(gateway.get_sensor_device("sq610_1_lqi"))
+
+    async def test_climate_signal_sensors_retain_value_across_an_absent_poll(self):
+        # present -> absent -> present. The fields drop out whenever the
+        # coordinator did not hear the device directly, so a refresh that omits
+        # them must not make the entities flap between a value and unavailable.
+        gateway = make_gateway_with_responses(
+            sq610_signal_response({"LastMessageRSSI_d": -58, "LastMessageLQI_d": 255}),
+            sq610_signal_response({"CommandResponse_d": "424131013c"}),
+            sq610_signal_response({"LastMessageRSSI_d": -61, "LastMessageLQI_d": 240}),
+        )
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+        self.assertEqual(-58, gateway.get_sensor_device("sq610_1_rssi").state)
+        self.assertEqual(255, gateway.get_sensor_device("sq610_1_lqi").state)
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+        retained_rssi = gateway.get_sensor_device("sq610_1_rssi")
+        retained_lqi = gateway.get_sensor_device("sq610_1_lqi")
+        self.assertIsNotNone(retained_rssi)
+        self.assertEqual(-58, retained_rssi.state)
+        self.assertTrue(retained_rssi.available)
+        self.assertIsNotNone(retained_lqi)
+        self.assertEqual(255, retained_lqi.state)
+        self.assertTrue(retained_lqi.available)
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+        self.assertEqual(-61, gateway.get_sensor_device("sq610_1_rssi").state)
+        self.assertEqual(240, gateway.get_sensor_device("sq610_1_lqi").state)
+
+    async def test_climate_signal_sensors_retain_value_without_an_sit600i_block(self):
+        gateway = make_gateway_with_responses(
+            sq610_signal_response({"LastMessageRSSI_d": -58, "LastMessageLQI_d": 255}),
+            sq610_signal_response(),
+        )
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+
+        self.assertEqual(-58, gateway.get_sensor_device("sq610_1_rssi").state)
+        self.assertEqual(255, gateway.get_sensor_device("sq610_1_lqi").state)
+
+    async def test_retained_signal_sensors_follow_parent_availability(self):
+        gateway = make_gateway_with_responses(
+            sq610_signal_response({"LastMessageRSSI_d": -58, "LastMessageLQI_d": 255}),
+            sq610_signal_response({"CommandResponse_d": "424131013c"}, online=0),
+        )
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+
+        rssi = gateway.get_sensor_device("sq610_1_rssi")
+        self.assertIsNotNone(rssi)
+        self.assertEqual(-58, rssi.state)
+        self.assertFalse(rssi.available)
+        self.assertFalse(gateway.get_climate_device("sq610_1").available)
+
+    async def test_climate_signal_sensors_removed_when_parent_device_disappears(self):
+        gateway = make_gateway_with_responses(
+            sq610_signal_response({"LastMessageRSSI_d": -58, "LastMessageLQI_d": 255}),
+            {"status": "success", "id": []},
+        )
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+        self.assertIsNotNone(gateway.get_sensor_device("sq610_1_rssi"))
+
+        await gateway._refresh_climate_devices(SQ610_REQUEST)
+
+        self.assertIsNone(gateway.get_climate_device("sq610_1"))
         self.assertIsNone(gateway.get_sensor_device("sq610_1_rssi"))
         self.assertIsNone(gateway.get_sensor_device("sq610_1_lqi"))
 

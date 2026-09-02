@@ -876,13 +876,23 @@ class IT600Gateway:
         sensor_devices: dict[str, SensorDevice] = {}
         binary_devices: dict[str, BinarySensorDevice] = {}
 
+        # Signal-quality readings are absent from most polls even for healthy
+        # devices, so the previous collection is handed to the parser to carry
+        # the last known value forward. Snapshotting it keeps the lookup stable
+        # while the `send_callback` path writes this poll's devices into it.
+        previous_sensors = dict(self._climate_sensor_devices)
+
         for device_status in await self._device_detail_statuses(devices, "climate"):
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 device = parse_climate_device(device_status)
                 if device is None:
                     continue
-                sensors = parse_climate_sensor_devices(device_status, device)
+                sensors = parse_climate_sensor_devices(
+                    device_status,
+                    device,
+                    previous_sensors,
+                )
                 binary_sensors = parse_climate_binary_sensor_devices(
                     device_status,
                     device,

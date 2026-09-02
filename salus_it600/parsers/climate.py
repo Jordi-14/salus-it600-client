@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from ..const import (
@@ -647,12 +648,18 @@ def _parse_trv_climate_device(
 def parse_climate_sensor_devices(
     device_status: dict[str, Any],
     climate_device: ClimateDevice,
+    previous_sensors: Mapping[str, SensorDevice] | None = None,
 ) -> list[SensorDevice]:
-    """Parse child sensors exposed by a climate payload."""
+    """Parse child sensors exposed by a climate payload.
+
+    `previous_sensors` is the caller's sensor collection from the previous
+    poll. It is only consulted for the signal-quality children, whose readings
+    are intermittently absent from otherwise healthy payloads.
+    """
     unique_id = climate_device.unique_id
     model = climate_device.model
     sensors: list[SensorDevice] = _signal_sensor_devices(
-        device_status, unique_id, climate_device.name
+        device_status, unique_id, climate_device.name, previous_sensors
     )
 
     if climate_device.current_humidity is not None:

@@ -47,7 +47,10 @@ Detailed device payloads normally include:
 on several device families, but only for devices the coordinator heard from
 directly on that particular poll. They are intermittently absent on otherwise
 healthy, online devices; a missing value must not be treated as a fault or
-reported as zero.
+reported as zero. Parsers therefore carry the last known reading forward for as
+long as the parent device is reported, taking availability and the rest of the
+child entity's metadata from the current poll, so the entity follows the parent
+device rather than the presence of the field.
 
 ## Climate Fields
 
