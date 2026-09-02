@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, NamedTuple
 
 from ..const import (
     BATTERY_VOLTAGE_THRESHOLDS,
@@ -158,8 +159,8 @@ def _child_sensor_device(
     name: str,
     *,
     state: Any,
-    unit_of_measurement: str,
-    device_class: str,
+    unit_of_measurement: str | None,
+    device_class: str | None,
     parent_unique_id: str,
     entity_category: str | None = None,
 ) -> SensorDevice:
@@ -172,6 +173,95 @@ def _child_sensor_device(
         parent_unique_id=parent_unique_id,
         entity_category=entity_category,
     )
+
+
+class _SignalSensorSpec(NamedTuple):
+    """Static description of one `sIT600I` signal-quality child sensor."""
+
+    id_suffix: str
+    payload_field: str
+    name_suffix: str
+    unit_of_measurement: str | None
+    device_class: str | None
+
+
+_SIGNAL_SENSOR_SPECS: tuple[_SignalSensorSpec, ...] = (
+    _SignalSensorSpec(
+        id_suffix="rssi",
+        payload_field="LastMessageRSSI_d",
+        name_suffix="Signal strength",
+        unit_of_measurement="dBm",
+        device_class="signal_strength",
+    ),
+    _SignalSensorSpec(
+        id_suffix="lqi",
+        payload_field="LastMessageLQI_d",
+        name_suffix="Link quality",
+        # Link quality is a bare 0-255 index: no unit, and no Home Assistant
+        # sensor device class matches it.
+        unit_of_measurement=None,
+        device_class=None,
+    ),
+)
+
+
+def _signal_reading(payload: dict[str, Any], field: str) -> int | None:
+    """Return an integer signal reading, rejecting bools and non-integers."""
+    value = payload.get(field)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _signal_sensor_devices(
+    device_status: dict[str, Any],
+    base_unique_id: str,
+    parent_name: str,
+    previous_sensors: Mapping[str, SensorDevice] | None = None,
+) -> list[SensorDevice]:
+    """Return the RSSI/LQI diagnostic sensors for one parent device.
+
+    `sIT600I.LastMessageRSSI_d` / `LastMessageLQI_d` are only populated for
+    devices the coordinator heard from directly on a given poll, so they are
+    intermittently absent even on healthy, online devices. A missing value must
+    not be reported as a fault or coerced to zero, and dropping the sensor for
+    that one refresh would make it flap between a value and `unavailable`, so
+    the last known reading from `previous_sensors` is carried forward instead.
+
+    Everything else -- availability above all -- is rebuilt from this poll's
+    parent payload, so these sensors track the parent device rather than the
+    presence of the field. They disappear only with the parent itself: callers
+    rebuild their collection every poll and never reach this helper for a
+    parent the gateway no longer reports.
+    """
+    sit600i = device_status.get("sIT600I")
+    payload = sit600i if isinstance(sit600i, dict) else {}
+    retained = previous_sensors if previous_sensors is not None else {}
+
+    sensors: list[SensorDevice] = []
+    for spec in _SIGNAL_SENSOR_SPECS:
+        unique_id = f"{base_unique_id}_{spec.id_suffix}"
+        state: Any = _signal_reading(payload, spec.payload_field)
+        if state is None:
+            previous = retained.get(unique_id)
+            if previous is None:
+                continue
+            state = previous.state
+
+        sensors.append(
+            _child_sensor_device(
+                device_status,
+                unique_id,
+                f"{parent_name} {spec.name_suffix}",
+                state=state,
+                unit_of_measurement=spec.unit_of_measurement,
+                device_class=spec.device_class,
+                parent_unique_id=base_unique_id,
+                entity_category="diagnostic",
+            )
+        )
+
+    return sensors
 
 
 def _child_binary_sensor_device(

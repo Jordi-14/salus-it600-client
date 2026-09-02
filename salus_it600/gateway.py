@@ -4,31 +4,53 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Any, Self, TypeVar
 
 import aiohttp
-
 from aiohttp import client_exceptions
 
 from .const import (
     COVER_POSITION_MAX,
     COVER_POSITION_MIN,
-    HVAC_MODE_HEAT,
+    FAN_MODE_AUTO,
+    FAN_MODE_HIGH,
+    FAN_MODE_LOW,
+    FAN_MODE_MEDIUM,
     HVAC_MODE_COOL,
+    HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
+    PRESET_AWAY,
+    PRESET_ECO,
     PRESET_OFF,
     PRESET_PERMANENT_HOLD,
     PRESET_SCHEDULE_OVERRIDE,
-    PRESET_ECO,
-    PRESET_AWAY,
-    FAN_MODE_AUTO,
-    FAN_MODE_HIGH,
-    FAN_MODE_MEDIUM,
-    FAN_MODE_LOW,
+    TEMPERATURE_SCALE,
     FanMode,
     HoldType,
     SystemMode,
-    TEMPERATURE_SCALE,
+)
+from .device_models import (
+    is_binary_sensor_summary,
+    is_fan_coil_model,
+    is_sq610_model,
+    is_trv_model,
+)
+from .encryptor import IT600Encryptor
+from .exceptions import (
+    IT600AuthenticationError,
+    IT600CommandError,
+    IT600ConnectionError,
+    IT600UnsupportedFirmwareError,
+)
+from .models import (
+    BinarySensorDevice,
+    ClimateDevice,
+    CoverDevice,
+    GatewayDevice,
+    SensorDevice,
+    SwitchDevice,
+    active_climate_system_mode,
+    active_temperature_range,
 )
 from .parsers import (
     PARSING_EXCEPTIONS,
@@ -40,15 +62,11 @@ from .parsers import (
     parse_cover_device,
     parse_meter_sensor_devices,
     parse_sensor_devices,
-    parse_switch_sensor_devices,
     parse_switch_device,
-)
-from .encryptor import IT600Encryptor
-from .exceptions import (
-    IT600AuthenticationError,
-    IT600CommandError,
-    IT600ConnectionError,
-    IT600UnsupportedFirmwareError,
+    parse_switch_sensor_devices,
+    parse_wiring_centre_binary_sensor_devices,
+    parse_wiring_centre_device,
+    parse_wiring_centre_sensor_devices,
 )
 from .protocol import (
     GatewayProtocol,
@@ -59,22 +77,6 @@ from .protocol import (
 )
 from .protocol_aes_cbc import AesCbcProtocol
 from .protocol_aes_ccm import AesCcmProtocol
-from .device_models import (
-    is_binary_sensor_summary,
-    is_fan_coil_model,
-    is_sq610_model,
-    is_trv_model,
-)
-from .models import (
-    active_climate_system_mode,
-    active_temperature_range,
-    GatewayDevice,
-    ClimateDevice,
-    BinarySensorDevice,
-    SwitchDevice,
-    CoverDevice,
-    SensorDevice,
-)
 
 _LOGGER = logging.getLogger("salus_it600")
 
@@ -141,7 +143,7 @@ def _validate_non_empty_string(value: str, field_name: str) -> str:
     return normalized
 
 
-def _validate_positive_number(value: int | float, field_name: str) -> int | float:
+def _validate_positive_number(value: float, field_name: str) -> int | float:
     """Validate a positive numeric argument."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{field_name} must be a number")
@@ -183,7 +185,7 @@ def _validate_supported_value(
 
 
 def _validate_setpoint(
-    value: int | float,
+    value: float,
     min_temp: float,
     max_temp: float,
 ) -> float:
@@ -360,7 +362,7 @@ class IT600Gateway:
         euid: str,
         host: str,
         port: int = 80,
-        request_timeout: int | float = 5,
+        request_timeout: float = 5,
         session: aiohttp.ClientSession | None = None,
         debug: bool = False,
     ) -> None:
@@ -405,6 +407,7 @@ class IT600Gateway:
         self._binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._climate_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._binary_sensor_diagnostic_devices: dict[str, BinarySensorDevice] = {}
+        self._wiring_centre_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._binary_sensor_update_callbacks: list[UpdateCallback] = []
 
         self._switch_devices: dict[str, SwitchDevice] = {}
@@ -417,6 +420,7 @@ class IT600Gateway:
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
+        self._wiring_centre_sensor_devices: dict[str, SensorDevice] = {}
         self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
@@ -466,7 +470,7 @@ class IT600Gateway:
         except IT600ConnectionError as ae:
             try:
                 await self._probe_gateway_root()
-            except (asyncio.TimeoutError, client_exceptions.ClientError):
+            except (TimeoutError, client_exceptions.ClientError):
                 raise IT600ConnectionError(
                     "Error occurred while communicating with iT600 gateway: "
                     "check if you have specified host/IP address correctly"
@@ -516,7 +520,11 @@ class IT600Gateway:
                     saw_unsupported_protocol = True
             except ProtocolDetectionError as exc:
                 _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - keep probing the next protocol
+                # Protocol detection is a probe: any failure means "not this
+                # protocol", including ones the protocol implementations do not
+                # wrap. A hard error is raised below only once every candidate
+                # has been tried.
                 _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
 
         if result is not None:
@@ -530,7 +538,7 @@ class IT600Gateway:
 
         try:
             await self._probe_gateway_root()
-        except (asyncio.TimeoutError, client_exceptions.ClientError) as exc:
+        except (TimeoutError, client_exceptions.ClientError) as exc:
             raise IT600ConnectionError(
                 "Error occurred while communicating with iT600 gateway: "
                 "check if you have specified host/IP address correctly"
@@ -583,6 +591,9 @@ class IT600Gateway:
             filter(lambda x: ("sIT600TH" in x) or ("sTherS" in x), device_items)
         )
         await self._refresh_climate_devices(climate_devices, send_callback)
+
+        wiring_centres = list(filter(lambda x: "sIT600WC" in x, device_items))
+        await self._refresh_wiring_centre_devices(wiring_centres, send_callback)
 
         binary_sensors = list(filter(is_binary_sensor_summary, device_items))
         await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
@@ -876,13 +887,23 @@ class IT600Gateway:
         sensor_devices: dict[str, SensorDevice] = {}
         binary_devices: dict[str, BinarySensorDevice] = {}
 
+        # Signal-quality readings are absent from most polls even for healthy
+        # devices, so the previous collection is handed to the parser to carry
+        # the last known value forward. Snapshotting it keeps the lookup stable
+        # while the `send_callback` path writes this poll's devices into it.
+        previous_sensors = dict(self._climate_sensor_devices)
+
         for device_status in await self._device_detail_statuses(devices, "climate"):
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 device = parse_climate_device(device_status)
                 if device is None:
                     continue
-                sensors = parse_climate_sensor_devices(device_status, device)
+                sensors = parse_climate_sensor_devices(
+                    device_status,
+                    device,
+                    previous_sensors,
+                )
                 binary_sensors = parse_climate_binary_sensor_devices(
                     device_status,
                     device,
@@ -924,6 +945,72 @@ class IT600Gateway:
         self._climate_sensor_devices = sensor_devices
         self._climate_binary_sensor_devices = binary_devices
         _LOGGER.debug("Refreshed %s climate devices", len(local_devices))
+
+    async def _refresh_wiring_centre_devices(
+        self,
+        devices: list[Any],
+        send_callback: bool = False,
+    ) -> None:
+        binary_devices: dict[str, BinarySensorDevice] = {}
+        sensor_devices: dict[str, SensorDevice] = {}
+
+        # Signal-quality readings are absent from most polls even for healthy
+        # devices, so the previous collection is handed to the parser to carry
+        # the last known value forward. Snapshotting it keeps the lookup stable
+        # while the `send_callback` path writes this poll's devices into it.
+        previous_sensors = dict(self._wiring_centre_sensor_devices)
+
+        for device_status in await self._device_detail_statuses(
+            devices,
+            "wiring centre",
+        ):
+            unique_id = device_status.get("data", {}).get("UniID")
+            try:
+                connectivity = parse_wiring_centre_device(device_status)
+                problem_sensors = parse_wiring_centre_binary_sensor_devices(
+                    device_status,
+                )
+                signal_sensors = parse_wiring_centre_sensor_devices(
+                    device_status,
+                    previous_sensors,
+                )
+            except PARSING_EXCEPTIONS:
+                _LOGGER.exception(
+                    "Failed to parse wiring centre device %s",
+                    unique_id,
+                )
+                continue
+
+            if connectivity is not None:
+                await self._store_refreshed_device(
+                    binary_devices,
+                    "_wiring_centre_binary_sensor_devices",
+                    self._send_binary_sensor_update_callback,
+                    connectivity,
+                    send_callback,
+                )
+
+            for problem_sensor in problem_sensors:
+                await self._store_refreshed_device(
+                    binary_devices,
+                    "_wiring_centre_binary_sensor_devices",
+                    self._send_binary_sensor_update_callback,
+                    problem_sensor,
+                    send_callback,
+                )
+
+            for signal_sensor in signal_sensors:
+                await self._store_refreshed_device(
+                    sensor_devices,
+                    "_wiring_centre_sensor_devices",
+                    self._send_sensor_update_callback,
+                    signal_sensor,
+                    send_callback,
+                )
+
+        self._wiring_centre_binary_sensor_devices = binary_devices
+        self._wiring_centre_sensor_devices = sensor_devices
+        _LOGGER.debug("Refreshed %s wiring centre devices", len(binary_devices))
 
     async def _send_climate_update_callback(self, device_id: str) -> None:
         """Internal method to notify all update callback subscribers."""
@@ -997,6 +1084,7 @@ class IT600Gateway:
             **self._binary_sensor_devices,
             **self._climate_binary_sensor_devices,
             **self._binary_sensor_diagnostic_devices,
+            **self._wiring_centre_binary_sensor_devices,
         }
 
     def get_binary_sensor_device(self, device_id: str) -> BinarySensorDevice | None:
@@ -1007,6 +1095,7 @@ class IT600Gateway:
             self._binary_sensor_devices.get(device_id)
             or self._climate_binary_sensor_devices.get(device_id)
             or self._binary_sensor_diagnostic_devices.get(device_id)
+            or self._wiring_centre_binary_sensor_devices.get(device_id)
         )
 
     def get_switch_devices(self) -> dict[str, SwitchDevice]:
@@ -1039,6 +1128,7 @@ class IT600Gateway:
             **self._climate_sensor_devices,
             **self._switch_sensor_devices,
             **self._meter_sensor_devices,
+            **self._wiring_centre_sensor_devices,
         }
 
     def get_sensor_device(self, device_id: str) -> SensorDevice | None:
@@ -1050,6 +1140,7 @@ class IT600Gateway:
             or self._climate_sensor_devices.get(device_id)
             or self._switch_sensor_devices.get(device_id)
             or self._meter_sensor_devices.get(device_id)
+            or self._wiring_centre_sensor_devices.get(device_id)
         )
 
     async def fetch_sq610_properties(
@@ -1450,7 +1541,7 @@ class IT600Gateway:
                     raise IT600ConnectionError(
                         "Error occurred while communicating with iT600 gateway"
                     ) from e
-                except asyncio.TimeoutError as e:
+                except TimeoutError as e:
                     _LOGGER.error("Timeout while connecting to gateway: %s", e)
                     raise IT600ConnectionError(
                         "Error occurred while communicating with iT600 gateway: timeout"
@@ -1491,7 +1582,7 @@ class IT600Gateway:
         if self._session and self._close_session:
             await self._session.close()
 
-    async def __aenter__(self) -> "IT600Gateway":
+    async def __aenter__(self) -> Self:
         """Return this gateway for use as an async context manager."""
 
         return self

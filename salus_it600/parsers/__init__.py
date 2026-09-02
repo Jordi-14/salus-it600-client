@@ -11,8 +11,17 @@ from .climate import (
 )
 from .common import PARSING_EXCEPTIONS
 from .cover import parse_cover_device
-from .sensor import parse_meter_sensor_devices, parse_sensor_device, parse_sensor_devices
+from .sensor import (
+    parse_meter_sensor_devices,
+    parse_sensor_device,
+    parse_sensor_devices,
+)
 from .switch import parse_switch_device, parse_switch_sensor_devices
+from .wiring_centre import (
+    parse_wiring_centre_binary_sensor_devices,
+    parse_wiring_centre_device,
+    parse_wiring_centre_sensor_devices,
+)
 
 __all__ = [
     "PARSING_EXCEPTIONS",
@@ -27,4 +36,7 @@ __all__ = [
     "parse_sensor_devices",
     "parse_switch_device",
     "parse_switch_sensor_devices",
+    "parse_wiring_centre_binary_sensor_devices",
+    "parse_wiring_centre_device",
+    "parse_wiring_centre_sensor_devices",
 ]
