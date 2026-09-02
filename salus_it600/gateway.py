@@ -954,6 +954,12 @@ class IT600Gateway:
         binary_devices: dict[str, BinarySensorDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
 
+        # Signal-quality readings are absent from most polls even for healthy
+        # devices, so the previous collection is handed to the parser to carry
+        # the last known value forward. Snapshotting it keeps the lookup stable
+        # while the `send_callback` path writes this poll's devices into it.
+        previous_sensors = dict(self._wiring_centre_sensor_devices)
+
         for device_status in await self._device_detail_statuses(
             devices,
             "wiring centre",
@@ -964,7 +970,10 @@ class IT600Gateway:
                 problem_sensors = parse_wiring_centre_binary_sensor_devices(
                     device_status,
                 )
-                signal_sensors = parse_wiring_centre_sensor_devices(device_status)
+                signal_sensors = parse_wiring_centre_sensor_devices(
+                    device_status,
+                    previous_sensors,
+                )
             except PARSING_EXCEPTIONS:
                 _LOGGER.exception(
                     "Failed to parse wiring centre device %s",
