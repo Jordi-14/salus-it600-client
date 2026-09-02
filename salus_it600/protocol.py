@@ -147,7 +147,7 @@ class GatewayProtocol(abc.ABC):
         session: aiohttp.ClientSession,
         host: str,
         port: int,
-        timeout: int | float,
+        timeout: float,
     ) -> dict[str, Any]:
         """Perform a readall request and return the parsed response."""
         url = f"http://{host}:{port}/deviceid/read"
