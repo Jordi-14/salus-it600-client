@@ -12,6 +12,7 @@ signal-quality children.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from ..const import THERMOSTAT_ERROR_CODES
@@ -96,11 +97,19 @@ def parse_wiring_centre_binary_sensor_devices(
 
 def parse_wiring_centre_sensor_devices(
     device_status: dict[str, Any],
+    previous_sensors: Mapping[str, SensorDevice] | None = None,
 ) -> list[SensorDevice]:
-    """Parse RSSI/LQI diagnostic sensors for an it600WC wiring centre."""
+    """Parse RSSI/LQI diagnostic sensors for an it600WC wiring centre.
+
+    `previous_sensors` is the caller's sensor collection from the previous
+    poll. The signal-quality readings are intermittently absent from otherwise
+    healthy payloads, so the last known value is carried forward from it.
+    """
     base_unique_id = device_status.get("data", {}).get("UniID")
     if base_unique_id is None or not isinstance(device_status.get("sIT600WC"), dict):
         return []
 
     parent_name = _device_name(device_status, base_unique_id)
-    return _signal_sensor_devices(device_status, base_unique_id, parent_name)
+    return _signal_sensor_devices(
+        device_status, base_unique_id, parent_name, previous_sensors
+    )
