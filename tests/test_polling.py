@@ -172,6 +172,75 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
             [(command, body["requestAttr"]) for command, body in request_calls],
         )
 
+    async def test_poll_status_refreshes_wiring_centre_devices(self):
+        readall = {
+            "status": "success",
+            "id": [
+                {"data": {"UniID": "gateway"}, "sGateway": {"NetworkLANMAC": "AA"}},
+                {
+                    "data": {"UniID": "wc_1"},
+                    "sIT600WC": {},
+                    "sBasicS": {"ModelIdentifier": "it600WC"},
+                },
+            ],
+        }
+        gateway_detail = {
+            "status": "success",
+            "id": [
+                {
+                    "data": {"UniID": "gateway"},
+                    "sGateway": {
+                        "NetworkLANMAC": "AA:BB:CC:DD:EE:FF",
+                        "ModelIdentifier": "UG600",
+                    },
+                    "sBasicS": {"ManufactureName": "SALUS"},
+                    "sOTA": {"OTAFirmwareVersion_d": "1.0.0"},
+                }
+            ],
+        }
+        wiring_centre_detail = {
+            "status": "success",
+            "id": [
+                {
+                    **detail_base("wc_1", "it600WC"),
+                    "sIT600WC": {"ErrorCodeWC_d": "0000", "Error12": 1},
+                    "sIT600I": {"LastMessageRSSI_d": -27, "LastMessageLQI_d": 255},
+                }
+            ],
+        }
+        gateway, request_calls = make_gateway_with_responses(
+            readall,
+            gateway_detail,
+            wiring_centre_detail,
+        )
+        callback_events = []
+
+        async def callback(device_id: str) -> None:
+            callback_events.append(device_id)
+
+        await gateway.add_binary_sensor_update_callback(callback)
+        await gateway.add_sensor_update_callback(callback)
+
+        await gateway.poll_status(send_callback=True)
+
+        self.assertIn("wc_1", gateway.get_binary_sensor_devices())
+        self.assertIn("wc_1_problem", gateway.get_binary_sensor_devices())
+        self.assertIn("wc_1_rssi", gateway.get_sensor_devices())
+        self.assertIn("wc_1_lqi", gateway.get_sensor_devices())
+        self.assertTrue(gateway.get_binary_sensor_device("wc_1_problem").is_on)
+        self.assertEqual(
+            ["wc_1", "wc_1_problem", "wc_1_rssi", "wc_1_lqi"],
+            callback_events,
+        )
+        self.assertEqual(
+            [
+                ("read", "readall"),
+                ("read", "deviceid"),
+                ("read", "deviceid"),
+            ],
+            [(command, body["requestAttr"]) for command, body in request_calls],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,9 @@ from salus_it600.parsers import (
     parse_sensor_devices,
     parse_switch_device,
     parse_switch_sensor_devices,
+    parse_wiring_centre_binary_sensor_devices,
+    parse_wiring_centre_device,
+    parse_wiring_centre_sensor_devices,
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -171,6 +174,29 @@ class TestPayloadFixtures(unittest.TestCase):
         self.assertEqual(100, sensors["trv_1_battery"].state)
         self.assertTrue(binary_sensors["trv_1_problem"].is_on)
         self.assertTrue(binary_sensors["trv_1_open_window"].is_on)
+
+    def test_wiring_centre_fixture(self) -> None:
+        payload = _fixture("wiring_centre_it600wc.json")
+        connectivity = parse_wiring_centre_device(payload)
+        binary_sensors = {
+            sensor.unique_id: sensor
+            for sensor in parse_wiring_centre_binary_sensor_devices(payload)
+        }
+        sensors = {
+            sensor.unique_id: sensor
+            for sensor in parse_wiring_centre_sensor_devices(payload)
+        }
+
+        assert connectivity is not None
+        self.assertEqual("wc_1", connectivity.unique_id)
+        self.assertTrue(connectivity.is_on)
+        self.assertEqual("connectivity", connectivity.device_class)
+        # Baseline "0000" ErrorCodeWC_d and all-zero fault registers must not
+        # read as a fault (bool("0000") is True in Python).
+        self.assertFalse(binary_sensors["wc_1_problem"].is_on)
+        self.assertEqual([], binary_sensors["wc_1_problem"].extra_state_attributes["errors"])
+        self.assertEqual(-27, sensors["wc_1_rssi"].state)
+        self.assertEqual(255, sensors["wc_1_lqi"].state)
 
 
 if __name__ == "__main__":

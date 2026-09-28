@@ -63,6 +63,8 @@ Devices are classified by protocol signature in gateway payloads:
 - **Cover**: Contains `sLevelS` with `CurrentLevel` position data for shutter
   devices such as RS600
 - **Gateway**: Root gateway device with `sGateway` MAC address
+- **Wiring centre**: Contains `sIT600WC` fault-register data (it600WC). No
+  valve/relay state of its own; exposed as diagnostic-only entities
 """
 
 from __future__ import annotations
@@ -90,6 +92,7 @@ MODEL_RE10B = "RE10B"
 MODEL_PS600 = "PS600"
 MODEL_ECM600 = "ECM600"
 MODEL_TRV3RF = "TRV3RF"
+MODEL_WC = "it600WC"
 
 SQ610_MODEL_TOKEN = "SQ610"
 
