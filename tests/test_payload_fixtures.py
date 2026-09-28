@@ -120,6 +120,14 @@ class TestPayloadFixtures(unittest.TestCase):
             binary_sensors["sq610_1_battery_error"].extra_state_attributes["errors"],
         )
 
+        settings = device.advanced_settings
+        assert settings is not None
+        self.assertTrue(settings.valve_protection)
+        self.assertEqual(0, settings.comfort_warm_floor)
+        self.assertEqual(15.0, settings.standby_heating_setpoint)
+        self.assertIsNone(settings.standby_cooling_setpoint)
+        self.assertEqual(180, settings.min_off_time_cooling)
+
     def test_fc600_climate_fixture(self) -> None:
         device = parse_climate_device(_fixture("climate_fc600.json"))
 
