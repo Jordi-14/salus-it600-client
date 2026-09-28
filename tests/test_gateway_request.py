@@ -1,6 +1,5 @@
 """Tests for Salus gateway request handling."""
 
-import asyncio
 import json
 import unittest
 from dataclasses import replace
@@ -231,7 +230,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Unknown error", message)
 
     async def test_make_encrypted_request_maps_timeout_to_connection_error(self):
-        session = FakeSession(error=asyncio.TimeoutError())
+        session = FakeSession(error=TimeoutError())
         gateway = make_gateway(session)
 
         with (
