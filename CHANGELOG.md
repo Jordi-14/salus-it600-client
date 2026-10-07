@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2 - 2026-10-07
+
+- Add RSSI and LQI diagnostic sensors for thermostats, retaining the last reading
+  when a poll omits these fields and following the parent device's availability.
+- Add diagnostic-only connectivity, fault, RSSI and LQI data for it600WC wiring
+  centres.
+- Decode SQ610 advanced settings into a typed read-only model. PIN bytes and
+  unverified fields remain excluded, with no write path.
+
 ## 0.6.1 - 2026-06-28
 
 Bug fixes:
