@@ -1,5 +1,6 @@
 """Device-family parser entry points for Salus iT600 gateway payloads."""
 
+from .advanced_settings import parse_advanced_settings
 from .binary_sensor import (
     parse_binary_diagnostic_devices,
     parse_binary_sensor_device,
@@ -25,6 +26,7 @@ from .wiring_centre import (
 
 __all__ = [
     "PARSING_EXCEPTIONS",
+    "parse_advanced_settings",
     "parse_binary_diagnostic_devices",
     "parse_binary_sensor_device",
     "parse_climate_binary_sensor_devices",
