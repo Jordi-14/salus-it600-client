@@ -80,7 +80,23 @@ def sq610_signal_response(sit600i: dict | None = None, online: int = 1) -> dict:
     return {"status": "success", "id": [detail]}
 
 
+def wiring_centre_signal_response(
+    sit600i: dict | None = None,
+    online: int = 1,
+) -> dict:
+    """Return one it600WC detail response, optionally carrying an sIT600I block."""
+    detail = {
+        **common_detail("wc_1", "it600WC"),
+        "sZDOInfo": {"OnlineStatus_i": online},
+        "sIT600WC": {"ErrorCodeWC_d": "0000"},
+    }
+    if sit600i is not None:
+        detail["sIT600I"] = sit600i
+    return {"status": "success", "id": [detail]}
+
+
 SQ610_REQUEST = [{"data": {"UniID": "sq610_1"}}]
+WC_REQUEST = [{"data": {"UniID": "wc_1"}}]
 
 
 class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
@@ -1410,6 +1426,256 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(gateway.get_climate_device("sq610_1"))
         self.assertIsNone(gateway.get_sensor_device("sq610_1_rssi"))
         self.assertIsNone(gateway.get_sensor_device("sq610_1_lqi"))
+
+    async def test_wiring_centre_connectivity_and_baseline_error_code_is_not_a_fault(
+        self,
+    ):
+        # `ErrorCodeWC_d` is a hex string ("0000" at baseline); a naive
+        # `bool(error_code)` check would report a fault on every healthy unit
+        # since a non-empty "0000" string is truthy.
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("wc_1", "it600WC"),
+                        "sIT600WC": {
+                            "ErrorCodeWC_d": "0000",
+                            "Error10": 0,
+                            "Error11": 0,
+                            "Error12": 0,
+                            "Error13": 0,
+                            "Error14": 0,
+                            "Error15": 0,
+                            "Error16": 0,
+                            "Error17": 0,
+                            "Error18": 0,
+                            "Error19": 0,
+                            "Error20": 0,
+                            "Error26": 0,
+                            "Error27": 0,
+                            "Error28": 0,
+                            "Error29": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices([{"data": {"UniID": "wc_1"}}])
+
+        connectivity = gateway.get_binary_sensor_device("wc_1")
+        problem = gateway.get_binary_sensor_device("wc_1_problem")
+        self.assertIsNotNone(connectivity)
+        self.assertTrue(connectivity.is_on)
+        self.assertEqual("connectivity", connectivity.device_class)
+        self.assertEqual("diagnostic", connectivity.entity_category)
+        self.assertIsNotNone(problem)
+        self.assertFalse(problem.is_on)
+        self.assertEqual([], problem.extra_state_attributes["errors"])
+        self.assertEqual("0000", problem.extra_state_attributes["error_code_wc"])
+
+    async def test_wiring_centre_problem_detects_active_fault_register(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("wc_1", "it600WC"),
+                        "sIT600WC": {
+                            "ErrorCodeWC_d": "0000",
+                            "Error12": 1,
+                            "Error27": 0,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices([{"data": {"UniID": "wc_1"}}])
+
+        problem = gateway.get_binary_sensor_device("wc_1_problem")
+        self.assertIsNotNone(problem)
+        self.assertTrue(problem.is_on)
+        self.assertEqual(
+            ["Undocumented wiring centre fault (Error12)"],
+            problem.extra_state_attributes["errors"],
+        )
+
+    async def test_wiring_centre_problem_detects_nonzero_error_code(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("wc_1", "it600WC"),
+                        "sIT600WC": {"ErrorCodeWC_d": "0001"},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices([{"data": {"UniID": "wc_1"}}])
+
+        problem = gateway.get_binary_sensor_device("wc_1_problem")
+        self.assertIsNotNone(problem)
+        self.assertTrue(problem.is_on)
+        self.assertEqual([], problem.extra_state_attributes["errors"])
+        self.assertEqual("0001", problem.extra_state_attributes["error_code_wc"])
+
+    async def test_wiring_centre_offline_connectivity_reports_off(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("wc_1", "it600WC"),
+                        "sZDOInfo": {"OnlineStatus_i": 0},
+                        "sIT600WC": {"ErrorCodeWC_d": "0000"},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices([{"data": {"UniID": "wc_1"}}])
+
+        connectivity = gateway.get_binary_sensor_device("wc_1")
+        self.assertIsNotNone(connectivity)
+        self.assertFalse(connectivity.is_on)
+        self.assertFalse(connectivity.available)
+
+    async def test_wiring_centre_reports_signal_strength_and_link_quality(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        **common_detail("wc_1", "it600WC"),
+                        "sIT600WC": {"ErrorCodeWC_d": "0000"},
+                        "sIT600I": {
+                            "CommandResponse_d": "42",
+                            "LastMessageRSSI_d": -27,
+                            "LastMessageLQI_d": 255,
+                        },
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices([{"data": {"UniID": "wc_1"}}])
+
+        rssi = gateway.get_sensor_device("wc_1_rssi")
+        lqi = gateway.get_sensor_device("wc_1_lqi")
+        self.assertIsNotNone(rssi)
+        self.assertEqual(-27, rssi.state)
+        self.assertEqual("wc_1", rssi.parent_unique_id)
+        self.assertIsNotNone(lqi)
+        self.assertEqual(255, lqi.state)
+
+    async def test_wiring_centre_signal_sensors_retain_value_across_an_absent_poll(
+        self,
+    ):
+        # present -> absent -> present, as for thermostats: the wiring centre
+        # shares the same intermittently populated sIT600I block, so a refresh
+        # that omits the readings must not make the entities flap between a
+        # value and unavailable.
+        gateway = make_gateway_with_responses(
+            wiring_centre_signal_response(
+                {"LastMessageRSSI_d": -27, "LastMessageLQI_d": 255}
+            ),
+            wiring_centre_signal_response({"CommandResponse_d": "42"}),
+            wiring_centre_signal_response(
+                {"LastMessageRSSI_d": -31, "LastMessageLQI_d": 240}
+            ),
+        )
+
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+        self.assertEqual(-27, gateway.get_sensor_device("wc_1_rssi").state)
+        self.assertEqual(255, gateway.get_sensor_device("wc_1_lqi").state)
+
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+        retained_rssi = gateway.get_sensor_device("wc_1_rssi")
+        retained_lqi = gateway.get_sensor_device("wc_1_lqi")
+        self.assertIsNotNone(retained_rssi)
+        self.assertEqual(-27, retained_rssi.state)
+        self.assertTrue(retained_rssi.available)
+        self.assertIsNotNone(retained_lqi)
+        self.assertEqual(255, retained_lqi.state)
+        self.assertTrue(retained_lqi.available)
+
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+        self.assertEqual(-31, gateway.get_sensor_device("wc_1_rssi").state)
+        self.assertEqual(240, gateway.get_sensor_device("wc_1_lqi").state)
+
+    async def test_retained_wiring_centre_signal_sensors_follow_parent_availability(
+        self,
+    ):
+        gateway = make_gateway_with_responses(
+            wiring_centre_signal_response(
+                {"LastMessageRSSI_d": -27, "LastMessageLQI_d": 255}
+            ),
+            wiring_centre_signal_response({"CommandResponse_d": "42"}, online=0),
+        )
+
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+
+        rssi = gateway.get_sensor_device("wc_1_rssi")
+        self.assertIsNotNone(rssi)
+        self.assertEqual(-27, rssi.state)
+        self.assertFalse(rssi.available)
+        self.assertFalse(gateway.get_binary_sensor_device("wc_1").available)
+
+    async def test_wiring_centre_signal_sensors_removed_when_parent_disappears(self):
+        gateway = make_gateway_with_responses(
+            wiring_centre_signal_response(
+                {"LastMessageRSSI_d": -27, "LastMessageLQI_d": 255}
+            ),
+            {"status": "success", "id": []},
+        )
+
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+        self.assertIsNotNone(gateway.get_sensor_device("wc_1_rssi"))
+
+        await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+
+        self.assertIsNone(gateway.get_binary_sensor_device("wc_1"))
+        self.assertIsNone(gateway.get_sensor_device("wc_1_rssi"))
+        self.assertIsNone(gateway.get_sensor_device("wc_1_lqi"))
+
+    async def test_wiring_centre_missing_uniid_is_skipped(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {
+                        "sIT600WC": {"ErrorCodeWC_d": "0000"},
+                    }
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices(
+            [{"data": {"UniID": "wc_1"}}],
+        )
+
+        self.assertEqual({}, gateway.get_binary_sensor_devices())
+        self.assertEqual({}, gateway.get_sensor_devices())
+
+    async def test_wiring_centre_missing_sit600wc_section_is_skipped(self):
+        gateway = make_gateway_with_response(
+            {
+                "status": "success",
+                "id": [
+                    {**common_detail("wc_1", "it600WC")},
+                ],
+            }
+        )
+
+        await gateway._refresh_wiring_centre_devices([{"data": {"UniID": "wc_1"}}])
+
+        self.assertEqual({}, gateway.get_binary_sensor_devices())
+        self.assertEqual({}, gateway.get_sensor_devices())
 
 
 if __name__ == "__main__":

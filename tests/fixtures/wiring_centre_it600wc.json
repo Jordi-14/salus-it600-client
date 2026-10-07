@@ -1,0 +1,41 @@
+{
+  "data": {
+    "UniID": "wc_1",
+    "Endpoint": 8
+  },
+  "sZDO": {
+    "DeviceName": "{\"deviceName\": \"Heating Wiring Centre\"}"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1
+  },
+  "sBasicS": {
+    "ManufactureName": "Computime",
+    "ModelIdentifier": "it600WC"
+  },
+  "DeviceL": {
+    "ModelIdentifier_i": "it600WC"
+  },
+  "sIT600WC": {
+    "ErrorCodeWC_d": "0000",
+    "Error10": 0,
+    "Error11": 0,
+    "Error12": 0,
+    "Error13": 0,
+    "Error14": 0,
+    "Error15": 0,
+    "Error16": 0,
+    "Error17": 0,
+    "Error18": 0,
+    "Error19": 0,
+    "Error20": 0,
+    "Error26": 0,
+    "Error27": 0,
+    "Error28": 0,
+    "Error29": 0
+  },
+  "sIT600I": {
+    "LastMessageRSSI_d": -27,
+    "LastMessageLQI_d": 255
+  }
+}
