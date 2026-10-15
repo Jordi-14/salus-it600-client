@@ -160,7 +160,7 @@ system, and the single point of failure for every zone it serves.
 
 | Field | Meaning |
 | --- | --- |
-| `sIT600WC.Error10`..`Error20`, `Error26`..`Error29` | Fault register bank. Meanings are not documented anywhere the client has found; the parser reports them by register name (see `THERMOSTAT_ERROR_CODES` in `salus_it600/const.py`, shared with the thermostat-side Error01-32 codes) |
+| `sIT600WC.Error10`..`Error20`, `Error26`..`Error29` | Fault register bank. The parser reports each active register with the vendor app's description (see `THERMOSTAT_ERROR_CODES` in `salus_it600/const.py`, shared with the thermostat-side Error01-32 codes) |
 | `sIT600WC.ErrorCodeWC_d` | Hex-string summary fault code, `"0000"` at baseline. `bool("0000")` is `True` in Python -- check `str(value).strip("0")` instead, the same pattern `parse_climate_binary_sensor_devices` uses for `sComm.DeviceErrorCode` |
 
 ## Protocol Enums
