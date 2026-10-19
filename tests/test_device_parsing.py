@@ -1498,9 +1498,49 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(problem)
         self.assertTrue(problem.is_on)
         self.assertEqual(
-            ["Undocumented wiring centre fault (Error12)"],
+            ["Lost link with Zone 2 thermostat"],
             problem.extra_state_attributes["errors"],
         )
+
+    async def test_wiring_centre_fault_registers_report_vendor_descriptions(self):
+        for register, description in (
+            ("Error10", "Lost link with Hot Water Timer"),
+            ("Error11", "Lost link with Zone 1 thermostat"),
+            ("Error12", "Lost link with Zone 2 thermostat"),
+            ("Error13", "Lost link with Zone 3 thermostat"),
+            ("Error14", "Lost link with Zone 4 thermostat"),
+            ("Error15", "Lost link with Zone 5 thermostat"),
+            ("Error16", "Lost link with Zone 6 thermostat"),
+            ("Error17", "Lost link with Zone 7 thermostat"),
+            ("Error18", "Lost link with Zone 8 thermostat"),
+            ("Error19", "Lost link with Gateway"),
+            ("Error20", "Lost link with RX30RF/RX10RF (RX1)"),
+            ("Error26", "Lost link with Zone 9 thermostat"),
+            ("Error27", "Lost link with Zone 10 thermostat"),
+            ("Error28", "Lost link with Zone 11 thermostat"),
+            ("Error29", "Lost link with Zone 12 thermostat"),
+        ):
+            with self.subTest(register=register):
+                gateway = make_gateway_with_response(
+                    {
+                        "status": "success",
+                        "id": [
+                            {
+                                **common_detail("wc_1", "it600WC"),
+                                "sIT600WC": {"ErrorCodeWC_d": "0000", register: 1},
+                            }
+                        ],
+                    }
+                )
+
+                await gateway._refresh_wiring_centre_devices(WC_REQUEST)
+
+                problem = gateway.get_binary_sensor_device("wc_1_problem")
+                self.assertIsNotNone(problem)
+                self.assertTrue(problem.is_on)
+                self.assertEqual(
+                    [description], problem.extra_state_attributes["errors"]
+                )
 
     async def test_wiring_centre_problem_detects_nonzero_error_code(self):
         gateway = make_gateway_with_response(

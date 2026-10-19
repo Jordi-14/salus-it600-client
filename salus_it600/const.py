@@ -227,11 +227,8 @@ BATTERY_VOLTAGE_THRESHOLDS: dict[str, list[tuple[float, int, str]]] = {
 # link, so this is one shared register table read from two device types
 # rather than two coincidentally-similar ones.
 #
-# The it600WC's own range (Error10-20, Error26-29) has no documented meaning
-# anywhere the client has found, unlike the thermostat-side codes below, so
-# those entries intentionally say only that -- the parser must not guess at
-# specific fault descriptions for a device that is a hydronic system's single
-# point of failure.
+# The it600WC's own range (Error10-20, Error26-29) uses the vendor app's own
+# fault descriptions, shortened to match the thermostat-side entries.
 THERMOSTAT_ERROR_CODES: dict[str, str] = {
     "Error01": "Paired TRV hardware issue",
     "Error02": "Floor sensor overheating",
@@ -242,26 +239,26 @@ THERMOSTAT_ERROR_CODES: dict[str, str] = {
     "Error07": "Lost link with TRV",
     "Error08": "Lost link with RX10RF (RX1)",
     "Error09": "Lost link with RX10RF (RX2)",
-    "Error10": "Undocumented wiring centre fault (Error10)",
-    "Error11": "Undocumented wiring centre fault (Error11)",
-    "Error12": "Undocumented wiring centre fault (Error12)",
-    "Error13": "Undocumented wiring centre fault (Error13)",
-    "Error14": "Undocumented wiring centre fault (Error14)",
-    "Error15": "Undocumented wiring centre fault (Error15)",
-    "Error16": "Undocumented wiring centre fault (Error16)",
-    "Error17": "Undocumented wiring centre fault (Error17)",
-    "Error18": "Undocumented wiring centre fault (Error18)",
-    "Error19": "Undocumented wiring centre fault (Error19)",
-    "Error20": "Undocumented wiring centre fault (Error20)",
+    "Error10": "Lost link with Hot Water Timer",
+    "Error11": "Lost link with Zone 1 thermostat",
+    "Error12": "Lost link with Zone 2 thermostat",
+    "Error13": "Lost link with Zone 3 thermostat",
+    "Error14": "Lost link with Zone 4 thermostat",
+    "Error15": "Lost link with Zone 5 thermostat",
+    "Error16": "Lost link with Zone 6 thermostat",
+    "Error17": "Lost link with Zone 7 thermostat",
+    "Error18": "Lost link with Zone 8 thermostat",
+    "Error19": "Lost link with Gateway",
+    "Error20": "Lost link with RX30RF/RX10RF (RX1)",
     "Error21": "Paired TRV lost link with Coordinator",
     "Error22": "Paired TRV low battery",
     "Error23": "Message from unpaired TRV",
     "Error24": "Rejected by Wiring Centre",
     "Error25": "Lost link with Parent",
-    "Error26": "Undocumented wiring centre fault (Error26)",
-    "Error27": "Undocumented wiring centre fault (Error27)",
-    "Error28": "Undocumented wiring centre fault (Error28)",
-    "Error29": "Undocumented wiring centre fault (Error29)",
+    "Error26": "Lost link with Zone 9 thermostat",
+    "Error27": "Lost link with Zone 10 thermostat",
+    "Error28": "Lost link with Zone 11 thermostat",
+    "Error29": "Lost link with Zone 12 thermostat",
     "Error30": "Paired TRV gear issue",
     "Error31": "Paired TRV adaptation issue",
     "Error32": "Low battery",
