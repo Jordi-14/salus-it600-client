@@ -9,7 +9,8 @@ API, so these notes are based on observed UG600 local Wi-Fi payloads.
 ```text
 readall
   -> summary payloads with protocol section hints
-  -> one deviceid request per supported device family
+  -> one deviceid request for every device (falls back to one request per
+     device family if the gateway rejects it or leaves devices out)
   -> detailed payloads parsed into library models
   -> internal state dictionaries replaced atomically
 ```

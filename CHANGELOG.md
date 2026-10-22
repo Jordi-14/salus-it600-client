@@ -16,6 +16,17 @@ Improvements:
   ValueError` / `except KeyError` handlers keep working. `IT600Error` and both
   new exceptions are exported from `salus_it600`.
 - `connect()` reuses an already-detected protocol instead of probing again.
+- Fetch every device's details in one `deviceid` request per poll instead of
+  one per device family (usually 2 requests per poll instead of up to 9). If
+  the gateway rejects the combined request, leaves devices out, or drops it 3
+  times in a row, the client goes back to per-family requests and logs this
+  once at info level. `IT600Gateway.combined_detail_requests` shows which mode
+  is active.
+- Retry read requests once after the gateway drops the connection, as writes
+  already were.
+- Log timeouts, rejected commands and invalid JSON at debug level; the raised
+  exceptions carry the detail. Log a device parse failure's traceback once,
+  then at debug level, and warn about implausible SQ610 humidity only once.
 - Use the vendor's fault descriptions for the it600WC wiring centre registers.
 
 ## 0.6.2 - 2026-10-07

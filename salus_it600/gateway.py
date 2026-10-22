@@ -93,6 +93,9 @@ _SQ610_WRITE_LOCK_KEY = "SetLockKey"
 # One retry opens a fresh connection; reads and writes are both safe to resend.
 _DISCONNECT_RETRY_ATTEMPTS = 2
 _DISCONNECT_RETRY_DELAY = 0.2
+# Consecutive connection failures on the combined detail request before the
+# client stops trying it and keeps using one request per device family.
+_COMBINED_DETAIL_FAILURE_LIMIT = 3
 _FAN_COIL_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_ECO: HoldType.ECO,
@@ -325,6 +328,36 @@ def _device_status_request_items(
     return request_items
 
 
+def _detail_items_by_device(
+    items: list[dict[str, Any]],
+) -> dict[tuple[Any, Any], dict[str, Any]]:
+    """Index detail payloads by (UniID, Endpoint), keeping the first match."""
+    indexed: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for item in items:
+        data = item.get("data")
+        if isinstance(data, dict):
+            indexed.setdefault((data.get("UniID"), data.get("Endpoint")), item)
+    return indexed
+
+
+def _find_detail_item(
+    indexed: Mapping[tuple[Any, Any], dict[str, Any]],
+    request_data: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Return the detail payload that answers one deviceid request item.
+
+    Discovery summaries do not always carry an Endpoint while detail payloads
+    do, so the Endpoint is only compared when the request includes one.
+    """
+    unique_id = request_data.get("UniID")
+    if "Endpoint" in request_data:
+        return indexed.get((unique_id, request_data["Endpoint"]))
+    for (item_unique_id, _endpoint), item in indexed.items():
+        if item_unique_id == unique_id:
+            return item
+    return None
+
+
 def _flatten_dict(data: dict[str, Any]) -> dict[str, Any]:
     """Flatten nested gateway payload dictionaries into a single key/value map."""
     flattened: dict[str, Any] = {}
@@ -404,6 +437,10 @@ class IT600Gateway:
         self._sensor_devices: dict[str, SensorDevice] = {}
         # Devices whose parse failure was already logged with a traceback.
         self._logged_parse_failures: set[tuple[str, str]] = set()
+        # Detail payloads fetched for the whole poll in one deviceid request.
+        self._prefetched_details: dict[tuple[Any, Any], dict[str, Any]] | None = None
+        self._combined_detail_requests = True
+        self._combined_detail_failures = 0
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
@@ -580,13 +617,24 @@ class IT600Gateway:
         ) as resp:
             await resp.read()
 
+    @property
+    def combined_detail_requests(self) -> bool:
+        """Return whether polls fetch all device details in one request.
+
+        Starts True and switches to False for the rest of this client's life
+        if the gateway rejects the combined request, leaves devices out of the
+        answer, or drops it repeatedly.
+        """
+        return self._combined_detail_requests
+
     async def poll_status(self) -> None:
         """Refresh all known device collections from the gateway.
 
-        The method performs a `readall` discovery request, then detailed
-        `deviceid` requests for each supported device family. Invalid individual
-        devices are logged and skipped; gateway communication errors propagate
-        to the caller.
+        The method performs a `readall` discovery request, then fetches the
+        detailed status of every device. It asks for all devices in one
+        `deviceid` request and falls back to one request per device family when
+        the gateway does not handle that. Invalid individual devices are logged
+        and skipped; gateway communication errors propagate to the caller.
         """
 
         all_devices = await self._make_encrypted_request(
@@ -596,35 +644,120 @@ class IT600Gateway:
         device_items = _response_items(all_devices, "readall")
 
         gateway_devices = list(filter(lambda x: "sGateway" in x, device_items))
-        await self._refresh_gateway_device(gateway_devices)
-
         climate_devices = list(
             filter(lambda x: ("sIT600TH" in x) or ("sTherS" in x), device_items)
         )
-        await self._refresh_climate_devices(climate_devices)
-
         wiring_centres = list(filter(lambda x: "sIT600WC" in x, device_items))
-        await self._refresh_wiring_centre_devices(wiring_centres)
-
         binary_sensors = list(filter(is_binary_sensor_summary, device_items))
-        await self._refresh_binary_sensor_devices(binary_sensors)
-
         sensors = list(filter(lambda x: "sTempS" in x, device_items))
-        await self._refresh_sensor_devices(sensors)
-
         switches = list(filter(lambda x: "sOnOffS" in x, device_items))
-        await self._refresh_switch_devices(switches)
-
         covers = list(filter(lambda x: "sLevelS" in x, device_items))
-        await self._refresh_cover_devices(covers)
-
         meters = list(
             filter(
                 lambda x: "sMeterS" in x and "sOnOffS" not in x,
                 device_items,
             )
         )
-        await self._refresh_meter_devices(meters)
+        families = [
+            gateway_devices,
+            climate_devices,
+            wiring_centres,
+            binary_sensors,
+            sensors,
+            switches,
+            covers,
+            meters,
+        ]
+
+        self._prefetched_details = await self._prefetch_device_details(families)
+        try:
+            await self._refresh_gateway_device(gateway_devices)
+            await self._refresh_climate_devices(climate_devices)
+            await self._refresh_wiring_centre_devices(wiring_centres)
+            await self._refresh_binary_sensor_devices(binary_sensors)
+            await self._refresh_sensor_devices(sensors)
+            await self._refresh_switch_devices(switches)
+            await self._refresh_cover_devices(covers)
+            await self._refresh_meter_devices(meters)
+        finally:
+            self._prefetched_details = None
+
+    async def _prefetch_device_details(
+        self,
+        families: list[list[Any]],
+    ) -> dict[tuple[Any, Any], dict[str, Any]] | None:
+        """Fetch every device's detail payload in one deviceid request.
+
+        Returns None, so each family is requested separately, when combined
+        requests are disabled, when there is nothing to gain, or when the
+        combined request fails. A rejected or incomplete answer disables the
+        combined request for good; dropped connections disable it after a few
+        consecutive failures.
+        """
+        if not self._combined_detail_requests:
+            return None
+        if sum(1 for family in families if family) < 2:
+            return None
+
+        request_items: list[dict[str, dict[str, Any]]] = []
+        seen: set[tuple[Any, Any]] = set()
+        for family in families:
+            for device in family:
+                data = device.get("data") if isinstance(device, dict) else None
+                if not isinstance(data, dict):
+                    continue
+                key = (data.get("UniID"), data.get("Endpoint"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                request_items.append({"data": data})
+        if not request_items:
+            return None
+
+        try:
+            response = await self._make_encrypted_request(
+                "read",
+                {"requestAttr": "deviceid", "id": request_items},
+            )
+            items = _response_items(response, "combined device detail")
+        except IT600CommandError as err:
+            self._disable_combined_detail_requests(f"gateway rejected it: {err}")
+            return None
+        except IT600ConnectionError as err:
+            self._combined_detail_failures += 1
+            _LOGGER.debug(
+                "Combined device detail request failed (%s/%s): %s",
+                self._combined_detail_failures,
+                _COMBINED_DETAIL_FAILURE_LIMIT,
+                err,
+            )
+            if self._combined_detail_failures >= _COMBINED_DETAIL_FAILURE_LIMIT:
+                self._disable_combined_detail_requests("repeated connection failures")
+            return None
+
+        indexed = _detail_items_by_device(items)
+        missing = [
+            item["data"].get("UniID")
+            for item in request_items
+            if _find_detail_item(indexed, item["data"]) is None
+        ]
+        if missing:
+            self._disable_combined_detail_requests(
+                f"answer left out {len(missing)} of {len(request_items)} devices"
+            )
+            return None
+
+        self._combined_detail_failures = 0
+        return indexed
+
+    def _disable_combined_detail_requests(self, reason: str) -> None:
+        """Switch to one deviceid request per device family."""
+        self._combined_detail_requests = False
+        _LOGGER.info(
+            "Requesting Salus device details per device family from now on "
+            "because the combined request did not work (%s)",
+            reason,
+        )
 
     async def _refresh_device_collection(
         self,
@@ -668,6 +801,13 @@ class IT600Gateway:
         request_items = _device_status_request_items(devices, device_type)
         if not request_items:
             return []
+
+        prefetched = self._prefetched_details
+        if prefetched is not None:
+            statuses = [
+                _find_detail_item(prefetched, item["data"]) for item in request_items
+            ]
+            return [status for status in statuses if status is not None]
 
         status = await self._make_encrypted_request(
             "read",
