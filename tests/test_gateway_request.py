@@ -228,7 +228,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         gateway = make_gateway(session)
 
         with (
-            self.assertLogs("salus_it600", level="ERROR"),
+            self.assertLogs("salus_it600", level="DEBUG"),
             self.assertRaises(IT600CommandError) as context,
         ):
             await gateway._make_encrypted_request(
@@ -246,7 +246,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         gateway = make_gateway(session)
 
         with (
-            self.assertLogs("salus_it600", level="ERROR"),
+            self.assertLogs("salus_it600", level="DEBUG"),
             self.assertRaises(IT600ConnectionError) as context,
         ):
             await gateway._make_encrypted_request(
@@ -262,7 +262,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             error_sequence=[client_exceptions.ServerDisconnectedError(), None],
         )
         gateway = make_gateway(session)
-        gateway._transient_write_retry_delay = 0
+        gateway._disconnect_retry_delay = 0
 
         response = await gateway._make_encrypted_request(
             "write",
@@ -272,15 +272,54 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"status": "success", "id": []}, response)
         self.assertEqual(2, len(session.post_calls))
 
-    async def test_make_encrypted_request_does_not_retry_read_disconnect(self):
+    async def test_make_encrypted_request_retries_read_disconnect_once(self):
         session = FakeSession(
             {"status": "success", "id": []},
             error_sequence=[client_exceptions.ServerDisconnectedError(), None],
         )
         gateway = make_gateway(session)
-        gateway._transient_write_retry_delay = 0
+        gateway._disconnect_retry_delay = 0
+
+        response = await gateway._make_encrypted_request(
+            "read",
+            {"requestAttr": "readall"},
+        )
+
+        self.assertEqual({"status": "success", "id": []}, response)
+        self.assertEqual(2, len(session.post_calls))
+
+    async def test_make_encrypted_request_retries_read_disconnect_only_once(self):
+        session = FakeSession(
+            {"status": "success", "id": []},
+            error_sequence=[
+                client_exceptions.ServerDisconnectedError(),
+                client_exceptions.ServerDisconnectedError(),
+                None,
+            ],
+        )
+        gateway = make_gateway(session)
+        gateway._disconnect_retry_delay = 0
 
         with self.assertRaises(IT600ConnectionError):
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertEqual(2, len(session.post_calls))
+
+    async def test_make_encrypted_request_does_not_retry_timeouts(self):
+        session = FakeSession(
+            {"status": "success", "id": []},
+            error_sequence=[TimeoutError(), None],
+        )
+        gateway = make_gateway(session)
+        gateway._disconnect_retry_delay = 0
+
+        with (
+            self.assertNoLogs("salus_it600", level="WARNING"),
+            self.assertRaises(IT600ConnectionError),
+        ):
             await gateway._make_encrypted_request(
                 "read",
                 {"requestAttr": "readall"},
@@ -298,7 +337,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         gateway = make_gateway(session)
-        gateway._transient_write_retry_delay = 0
+        gateway._disconnect_retry_delay = 0
 
         with self.assertRaises(IT600ConnectionError):
             await gateway._make_encrypted_request(

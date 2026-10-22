@@ -28,6 +28,8 @@ DEFAULT_HOLD_TYPE = HoldType.PERMANENT_HOLD
 DEFAULT_RUNNING_STATE = RunningState.IDLE
 PARSING_EXCEPTIONS = (KeyError, TypeError, ValueError)
 _MISSING_HOLD_TYPE_WARNED: set[str] = set()
+# Implausible humidity repeats on every poll; warn once, then log at debug.
+_IMPLAUSIBLE_HUMIDITY_WARNED = False
 
 
 def _numeric_value(value: Any) -> float | None:
@@ -66,7 +68,16 @@ def _humidity_percent(raw_humidity: Any) -> float | None:
     if 0 <= humidity <= 100:
         return humidity
 
-    _LOGGER.warning("Ignoring implausible SQ610 humidity value: %s", raw_humidity)
+    global _IMPLAUSIBLE_HUMIDITY_WARNED
+    if _IMPLAUSIBLE_HUMIDITY_WARNED:
+        _LOGGER.debug("Ignoring implausible SQ610 humidity value: %s", raw_humidity)
+    else:
+        _IMPLAUSIBLE_HUMIDITY_WARNED = True
+        _LOGGER.warning(
+            "Ignoring implausible SQ610 humidity value: %s; repeats are logged at "
+            "debug level",
+            raw_humidity,
+        )
     return None
 
 

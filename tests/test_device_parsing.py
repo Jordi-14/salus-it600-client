@@ -1298,6 +1298,34 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("switch_1_2", gateway.get_switch_devices())
 
+    async def test_parse_failure_traceback_is_logged_once_per_device(self):
+        gateway = make_gateway_with_response(
+            {"status": "success", "id": [{"data": {"UniID": "cover_1"}}]}
+        )
+
+        def broken_parser(device_status: dict) -> None:
+            raise KeyError("missing field")
+
+        devices = [{"data": {"UniID": "cover_1"}}]
+        with self.assertLogs("salus_it600", level="DEBUG") as first:
+            await gateway._refresh_device_collection(
+                devices, "cover", "_cover_devices", broken_parser
+            )
+        with self.assertLogs("salus_it600", level="DEBUG") as second:
+            await gateway._refresh_device_collection(
+                devices, "cover", "_cover_devices", broken_parser
+            )
+
+        self.assertEqual(
+            ["ERROR"],
+            [r.levelname for r in first.records if "Failed to parse" in r.message],
+        )
+        self.assertEqual(
+            ["DEBUG"],
+            [r.levelname for r in second.records if "Failed to parse" in r.message],
+        )
+        self.assertEqual({}, gateway.get_cover_devices())
+
     async def test_device_detail_response_validation_propagates(self):
         gateway = make_gateway_with_response({"status": "success"})
 

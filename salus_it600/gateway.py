@@ -88,7 +88,11 @@ _SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
 _SQ610_WRITE_HOLD_TYPE = "SetHoldType"
 _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 _SQ610_WRITE_LOCK_KEY = "SetLockKey"
-_TRANSIENT_WRITE_RETRY_DELAY = 0.2
+# The gateway drops idle keep-alive connections without telling the client, so
+# the next request on a reused connection fails with ServerDisconnectedError.
+# One retry opens a fresh connection; reads and writes are both safe to resend.
+_DISCONNECT_RETRY_ATTEMPTS = 2
+_DISCONNECT_RETRY_DELAY = 0.2
 _FAN_COIL_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_ECO: HoldType.ECO,
@@ -377,7 +381,7 @@ class IT600Gateway:
         self._host = host
         self._port = port
         self._request_timeout = request_timeout
-        self._transient_write_retry_delay = _TRANSIENT_WRITE_RETRY_DELAY
+        self._disconnect_retry_delay = _DISCONNECT_RETRY_DELAY
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
 
@@ -398,6 +402,8 @@ class IT600Gateway:
         self._cover_devices: dict[str, CoverDevice] = {}
 
         self._sensor_devices: dict[str, SensorDevice] = {}
+        # Devices whose parse failure was already logged with a traceback.
+        self._logged_parse_failures: set[tuple[str, str]] = set()
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
@@ -460,6 +466,31 @@ class IT600Gateway:
                 "Error occurred while communicating with iT600 gateway: "
                 "check if you have specified EUID correctly"
             ) from ae
+
+    def _log_parse_failure(
+        self,
+        device_type: str,
+        unique_id: Any,
+        err: Exception,
+    ) -> None:
+        """Log a device parse failure.
+
+        A malformed device fails on every poll, so the traceback is logged once
+        per device and later failures go to debug level.
+        """
+        key = (device_type, str(unique_id))
+        if key in self._logged_parse_failures:
+            _LOGGER.debug(
+                "Failed to parse %s device %s: %r", device_type, unique_id, err
+            )
+            return
+        self._logged_parse_failures.add(key)
+        _LOGGER.error(
+            "Failed to parse %s device %s; repeats are logged at debug level",
+            device_type,
+            unique_id,
+            exc_info=err,
+        )
 
     def _protocol_candidates(self) -> list[GatewayProtocol]:
         """Return protocol candidates in the order they should be attempted."""
@@ -609,12 +640,8 @@ class IT600Gateway:
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 device = parser(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse %s device %s",
-                    device_type,
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure(device_type, unique_id, err)
                 continue
 
             if device is None:
@@ -677,8 +704,8 @@ class IT600Gateway:
                         "OTAFirmwareVersion_d", None
                     ),
                 )
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to poll gateway %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("gateway", unique_id, err)
 
         self._gateway_device = local_device
         _LOGGER.debug("Refreshed gateway device")
@@ -706,8 +733,8 @@ class IT600Gateway:
             try:
                 device = parse_switch_device(device_status)
                 sensors = parse_switch_sensor_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to parse switch device %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("switch", unique_id, err)
                 continue
 
             if device is not None:
@@ -730,8 +757,8 @@ class IT600Gateway:
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 sensors = parse_sensor_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to parse sensor device %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("sensor", unique_id, err)
                 continue
 
             for sensor in sensors:
@@ -750,8 +777,8 @@ class IT600Gateway:
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 sensors = parse_meter_sensor_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to parse meter device %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("meter", unique_id, err)
                 continue
 
             for sensor in sensors:
@@ -775,11 +802,8 @@ class IT600Gateway:
             try:
                 device = parse_binary_sensor_device(device_status)
                 diagnostics = parse_binary_diagnostic_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse binary sensor device %s",
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("binary sensor", unique_id, err)
                 continue
 
             if device is not None:
@@ -820,11 +844,8 @@ class IT600Gateway:
                     device_status,
                     device,
                 )
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse climate device %s",
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("climate", unique_id, err)
                 continue
 
             local_devices[device.unique_id] = device
@@ -866,11 +887,8 @@ class IT600Gateway:
                     device_status,
                     previous_sensors,
                 )
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse wiring centre device %s",
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("wiring centre", unique_id, err)
                 continue
 
             if connectivity is not None:
@@ -1286,7 +1304,7 @@ class IT600Gateway:
 
             request_url = f"http://{self._host}:{self._port}/deviceid/{command}"
             request_body_json = json.dumps(request_body)
-            retry_attempts = 2 if command == "write" else 1
+            retry_attempts = _DISCONNECT_RETRY_ATTEMPTS
 
             if self._debug:
                 _LOGGER.debug(
@@ -1301,10 +1319,11 @@ class IT600Gateway:
             for attempt in range(retry_attempts):
                 if attempt:
                     _LOGGER.debug(
-                        "Gateway disconnected during write request; retrying once"
+                        "Gateway disconnected during %s request; retrying once",
+                        command,
                     )
-                    if self._transient_write_retry_delay > 0:
-                        await asyncio.sleep(self._transient_write_retry_delay)
+                    if self._disconnect_retry_delay > 0:
+                        await asyncio.sleep(self._disconnect_retry_delay)
 
                 try:
                     async with self._session.post(
@@ -1349,7 +1368,7 @@ class IT600Gateway:
                         repr_request_body = repr(request_body)
                         repr_response_body = repr(response_json)
 
-                        _LOGGER.error("%s failed: %s", command, repr_request_body)
+                        _LOGGER.debug("%s failed: %s", command, repr_request_body)
                         raise IT600CommandError(
                             f"iT600 gateway rejected '{command}' command with "
                             f"content '{repr_request_body}' and response "
@@ -1364,7 +1383,7 @@ class IT600Gateway:
                         "Error occurred while communicating with iT600 gateway"
                     ) from e
                 except TimeoutError as e:
-                    _LOGGER.error("Timeout while connecting to gateway: %s", e)
+                    _LOGGER.debug("Timeout during %s request to gateway", command)
                     raise IT600ConnectionError(
                         "Error occurred while communicating with iT600 gateway: timeout"
                     ) from e
@@ -1378,7 +1397,7 @@ class IT600Gateway:
                         "Error occurred while communicating with iT600 gateway"
                     ) from e
                 except json.JSONDecodeError as e:
-                    _LOGGER.error("Gateway returned invalid JSON for %s command", command)
+                    _LOGGER.debug("Gateway returned invalid JSON for %s command", command)
                     raise IT600CommandError(
                         "Invalid JSON response received from iT600 gateway"
                     ) from e
