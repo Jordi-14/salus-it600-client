@@ -3,7 +3,11 @@
 import unittest
 
 from salus_it600.exceptions import IT600ConnectionError
-from salus_it600.gateway import IT600Gateway
+from salus_it600.gateway import (
+    IT600Gateway,
+    _detail_items_by_device,
+    _select_detail_items,
+)
 
 
 def make_gateway_with_responses(
@@ -160,6 +164,37 @@ def request_kinds(request_calls: list[tuple[str, dict]]) -> list[tuple[str, str]
 PER_FAMILY_REQUESTS = [("read", "readall")] + [("read", "deviceid")] * 6
 
 
+def two_channel_switch_payloads() -> tuple[dict, list[dict]]:
+    """Return discovery without an Endpoint for a two-channel switch.
+
+    The gateway answers that device's detail request with both channels.
+    """
+    readall, details = full_poll_payloads()
+    readall = {
+        "status": "success",
+        "id": [
+            readall["id"][0],
+            {"data": {"UniID": "dual_1"}, "sOnOffS": {}},
+        ],
+    }
+    switch_detail = {
+        "status": "success",
+        "id": [
+            {
+                **detail_base("dual_1", "SR600", endpoint=endpoint),
+                "sOnOffS": {"OnOff": endpoint % 2},
+            }
+            for endpoint in (1, 2)
+        ],
+    }
+    return readall, [details[0], switch_detail]
+
+
+def switch_record(unique_id: str, endpoint: int) -> dict:
+    """Return a minimal switch detail record."""
+    return {"data": {"UniID": unique_id, "Endpoint": endpoint}, "sOnOffS": {}}
+
+
 class TestPolling(unittest.IsolatedAsyncioTestCase):
     async def test_poll_status_fetches_all_details_in_one_request(self):
         readall, details = full_poll_payloads()
@@ -271,6 +306,39 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len(request_calls[1][1]["id"]))
         self.assertTrue(gateway.combined_detail_requests)
 
+    async def test_device_without_endpoint_keeps_every_channel(self):
+        readall, details = two_channel_switch_payloads()
+        combined, combined_calls = make_gateway_with_responses(
+            readall,
+            combined_detail(*details),
+        )
+        per_family, _calls = make_gateway_with_responses(
+            readall,
+            {"status": "failed"},
+            *details,
+        )
+
+        await combined.poll_status()
+        await per_family.poll_status()
+
+        self.assertEqual(
+            [("read", "readall"), ("read", "deviceid")],
+            request_kinds(combined_calls),
+        )
+        self.assertTrue(combined.combined_detail_requests)
+        self.assertFalse(per_family.combined_detail_requests)
+        self.assertEqual({"dual_1_1", "dual_1_2"}, set(combined.get_switch_devices()))
+        self.assertEqual(
+            {
+                unique_id: device.is_on
+                for unique_id, device in per_family.get_switch_devices().items()
+            },
+            {
+                unique_id: device.is_on
+                for unique_id, device in combined.get_switch_devices().items()
+            },
+        )
+
     async def test_poll_status_refreshes_wiring_centre_devices(self):
         readall = {
             "status": "success",
@@ -322,6 +390,53 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
             [("read", "readall"), ("read", "deviceid")],
             request_kinds(request_calls),
         )
+
+
+class TestDetailSelection(unittest.TestCase):
+    def setUp(self):
+        self.grouped = _detail_items_by_device(
+            [
+                switch_record("dual_1", 1),
+                switch_record("dual_1", 2),
+                switch_record("other", 1),
+            ]
+        )
+
+    def test_explicit_endpoint_matches_only_that_endpoint(self):
+        selected = _select_detail_items(
+            self.grouped,
+            [{"data": {"UniID": "dual_1", "Endpoint": 2}}],
+        )
+
+        self.assertEqual([switch_record("dual_1", 2)], selected)
+
+    def test_missing_endpoint_matches_every_endpoint(self):
+        selected = _select_detail_items(self.grouped, [{"data": {"UniID": "dual_1"}}])
+
+        self.assertEqual(
+            [switch_record("dual_1", 1), switch_record("dual_1", 2)], selected
+        )
+
+    def test_overlapping_discovery_entries_select_each_record_once(self):
+        selected = _select_detail_items(
+            self.grouped,
+            [
+                {"data": {"UniID": "dual_1", "Endpoint": 2}},
+                {"data": {"UniID": "dual_1"}},
+                {"data": {"UniID": "dual_1", "Endpoint": 1}},
+            ],
+        )
+
+        self.assertEqual(
+            [switch_record("dual_1", 2), switch_record("dual_1", 1)], selected
+        )
+
+    def test_duplicate_records_in_answer_are_kept_once(self):
+        grouped = _detail_items_by_device(
+            [switch_record("dual_1", 1), switch_record("dual_1", 1)]
+        )
+
+        self.assertEqual([switch_record("dual_1", 1)], grouped["dual_1"])
 
 
 if __name__ == "__main__":

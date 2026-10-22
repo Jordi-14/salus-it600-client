@@ -328,34 +328,61 @@ def _device_status_request_items(
     return request_items
 
 
-def _detail_items_by_device(
-    items: list[dict[str, Any]],
-) -> dict[tuple[Any, Any], dict[str, Any]]:
-    """Index detail payloads by (UniID, Endpoint), keeping the first match."""
-    indexed: dict[tuple[Any, Any], dict[str, Any]] = {}
+DetailIndex = dict[Any, list[dict[str, Any]]]
+
+
+def _detail_items_by_device(items: list[dict[str, Any]]) -> DetailIndex:
+    """Group detail payloads by UniID, keeping one per (UniID, Endpoint)."""
+    grouped: DetailIndex = {}
+    seen: set[tuple[Any, Any]] = set()
     for item in items:
         data = item.get("data")
-        if isinstance(data, dict):
-            indexed.setdefault((data.get("UniID"), data.get("Endpoint")), item)
-    return indexed
+        if not isinstance(data, dict):
+            continue
+        key = (data.get("UniID"), data.get("Endpoint"))
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped.setdefault(key[0], []).append(item)
+    return grouped
 
 
-def _find_detail_item(
-    indexed: Mapping[tuple[Any, Any], dict[str, Any]],
+def _find_detail_items(
+    grouped: Mapping[Any, list[dict[str, Any]]],
     request_data: Mapping[str, Any],
-) -> dict[str, Any] | None:
-    """Return the detail payload that answers one deviceid request item.
+) -> list[dict[str, Any]]:
+    """Return the detail payloads that answer one deviceid request item.
 
     Discovery summaries do not always carry an Endpoint while detail payloads
-    do, so the Endpoint is only compared when the request includes one.
+    do. Without an Endpoint the gateway answers with every endpoint of the
+    device (for example both channels of a two-channel switch), so all of them
+    are returned. With an Endpoint only that endpoint matches.
     """
-    unique_id = request_data.get("UniID")
-    if "Endpoint" in request_data:
-        return indexed.get((unique_id, request_data["Endpoint"]))
-    for (item_unique_id, _endpoint), item in indexed.items():
-        if item_unique_id == unique_id:
-            return item
-    return None
+    items = grouped.get(request_data.get("UniID"), [])
+    if "Endpoint" not in request_data:
+        return list(items)
+    endpoint = request_data["Endpoint"]
+    return [item for item in items if item["data"].get("Endpoint") == endpoint]
+
+
+def _select_detail_items(
+    grouped: Mapping[Any, list[dict[str, Any]]],
+    request_items: list[dict[str, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Return the detail payloads for a family, each payload at most once.
+
+    Overlapping discovery entries (one with and one without an Endpoint) match
+    the same payload, which must not be parsed twice.
+    """
+    selected: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any]] = set()
+    for request_item in request_items:
+        for item in _find_detail_items(grouped, request_item["data"]):
+            key = (item["data"].get("UniID"), item["data"].get("Endpoint"))
+            if key not in seen:
+                seen.add(key)
+                selected.append(item)
+    return selected
 
 
 def _flatten_dict(data: dict[str, Any]) -> dict[str, Any]:
@@ -438,7 +465,7 @@ class IT600Gateway:
         # Devices whose parse failure was already logged with a traceback.
         self._logged_parse_failures: set[tuple[str, str]] = set()
         # Detail payloads fetched for the whole poll in one deviceid request.
-        self._prefetched_details: dict[tuple[Any, Any], dict[str, Any]] | None = None
+        self._prefetched_details: DetailIndex | None = None
         self._combined_detail_requests = True
         self._combined_detail_failures = 0
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
@@ -685,7 +712,7 @@ class IT600Gateway:
     async def _prefetch_device_details(
         self,
         families: list[list[Any]],
-    ) -> dict[tuple[Any, Any], dict[str, Any]] | None:
+    ) -> DetailIndex | None:
         """Fetch every device's detail payload in one deviceid request.
 
         Returns None, so each family is requested separately, when combined
@@ -739,7 +766,7 @@ class IT600Gateway:
         missing = [
             item["data"].get("UniID")
             for item in request_items
-            if _find_detail_item(indexed, item["data"]) is None
+            if not _find_detail_items(indexed, item["data"])
         ]
         if missing:
             self._disable_combined_detail_requests(
@@ -804,10 +831,7 @@ class IT600Gateway:
 
         prefetched = self._prefetched_details
         if prefetched is not None:
-            statuses = [
-                _find_detail_item(prefetched, item["data"]) for item in request_items
-            ]
-            return [status for status in statuses if status is not None]
+            return _select_detail_items(prefetched, request_items)
 
         status = await self._make_encrypted_request(
             "read",
