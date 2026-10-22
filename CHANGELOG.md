@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0b1 - 2026-10-22
 
 Breaking changes (release as 0.7.0):
 
