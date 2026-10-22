@@ -1276,7 +1276,7 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(device.current_temperature)
         self.assertEqual(21.0, device.target_temperature)
 
-    async def test_refresh_invokes_registered_callbacks(self):
+    async def test_refresh_stores_switch_endpoint(self):
         gateway = make_gateway_with_response(
             {
                 "status": "success",
@@ -1292,19 +1292,39 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                 ],
             }
         )
-        callback_device_ids = []
-
-        async def callback(device_id: str) -> None:
-            callback_device_ids.append(device_id)
-
-        await gateway.add_switch_update_callback(callback)
         await gateway._refresh_switch_devices(
             [{"data": {"UniID": "switch_1", "Endpoint": 2}}],
-            send_callback=True,
         )
 
-        self.assertEqual(["switch_1_2"], callback_device_ids)
         self.assertIn("switch_1_2", gateway.get_switch_devices())
+
+    async def test_parse_failure_traceback_is_logged_once_per_device(self):
+        gateway = make_gateway_with_response(
+            {"status": "success", "id": [{"data": {"UniID": "cover_1"}}]}
+        )
+
+        def broken_parser(device_status: dict) -> None:
+            raise KeyError("missing field")
+
+        devices = [{"data": {"UniID": "cover_1"}}]
+        with self.assertLogs("salus_it600", level="DEBUG") as first:
+            await gateway._refresh_device_collection(
+                devices, "cover", "_cover_devices", broken_parser
+            )
+        with self.assertLogs("salus_it600", level="DEBUG") as second:
+            await gateway._refresh_device_collection(
+                devices, "cover", "_cover_devices", broken_parser
+            )
+
+        self.assertEqual(
+            ["ERROR"],
+            [r.levelname for r in first.records if "Failed to parse" in r.message],
+        )
+        self.assertEqual(
+            ["DEBUG"],
+            [r.levelname for r in second.records if "Failed to parse" in r.message],
+        )
+        self.assertEqual({}, gateway.get_cover_devices())
 
     async def test_device_detail_response_validation_propagates(self):
         gateway = make_gateway_with_response({"status": "success"})

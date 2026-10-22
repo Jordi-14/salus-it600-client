@@ -30,20 +30,32 @@ from salus_it600.const import (
 from salus_it600.exceptions import (
     IT600CommandError,
     IT600ConnectionError,
+    IT600DeviceNotFoundError,
+    IT600Error,
     IT600UnsupportedFirmwareError,
+    IT600ValidationError,
 )
 from salus_it600.gateway import IT600Gateway
 from salus_it600.models import ClimateDevice
+from salus_it600.protocol import GatewayProtocol
 
 
-class PassthroughEncryptor:
-    """Minimal encryptor for request tests."""
+class PassthroughProtocol(GatewayProtocol):
+    """Plain-text protocol for request tests."""
 
-    def encrypt(self, plain: str) -> bytes:
-        return plain.encode("utf-8")
+    name = "passthrough"
 
-    def decrypt(self, cypher: bytes) -> str:
-        return cypher.decode("utf-8")
+    def encrypt(self, plaintext: str) -> bytes:
+        return plaintext.encode("utf-8")
+
+    def decrypt(self, ciphertext: bytes) -> str:
+        return ciphertext.decode("utf-8")
+
+    def wrap_request(self, body_json: str) -> bytes:
+        return self.encrypt(body_json)
+
+    def unwrap_response(self, raw: bytes) -> str:
+        return self.decrypt(raw)
 
 
 class FakeResponse:
@@ -119,7 +131,7 @@ class FakeSession:
 def make_gateway(session: FakeSession) -> IT600Gateway:
     """Create a gateway using fake network and encryption layers."""
     gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128", session=session)
-    gateway._encryptor = PassthroughEncryptor()
+    gateway._protocol = PassthroughProtocol()
     return gateway
 
 
@@ -216,7 +228,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         gateway = make_gateway(session)
 
         with (
-            self.assertLogs("salus_it600", level="ERROR"),
+            self.assertLogs("salus_it600", level="DEBUG"),
             self.assertRaises(IT600CommandError) as context,
         ):
             await gateway._make_encrypted_request(
@@ -234,7 +246,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         gateway = make_gateway(session)
 
         with (
-            self.assertLogs("salus_it600", level="ERROR"),
+            self.assertLogs("salus_it600", level="DEBUG"),
             self.assertRaises(IT600ConnectionError) as context,
         ):
             await gateway._make_encrypted_request(
@@ -250,7 +262,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             error_sequence=[client_exceptions.ServerDisconnectedError(), None],
         )
         gateway = make_gateway(session)
-        gateway._transient_write_retry_delay = 0
+        gateway._disconnect_retry_delay = 0
 
         response = await gateway._make_encrypted_request(
             "write",
@@ -260,15 +272,54 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"status": "success", "id": []}, response)
         self.assertEqual(2, len(session.post_calls))
 
-    async def test_make_encrypted_request_does_not_retry_read_disconnect(self):
+    async def test_make_encrypted_request_retries_read_disconnect_once(self):
         session = FakeSession(
             {"status": "success", "id": []},
             error_sequence=[client_exceptions.ServerDisconnectedError(), None],
         )
         gateway = make_gateway(session)
-        gateway._transient_write_retry_delay = 0
+        gateway._disconnect_retry_delay = 0
+
+        response = await gateway._make_encrypted_request(
+            "read",
+            {"requestAttr": "readall"},
+        )
+
+        self.assertEqual({"status": "success", "id": []}, response)
+        self.assertEqual(2, len(session.post_calls))
+
+    async def test_make_encrypted_request_retries_read_disconnect_only_once(self):
+        session = FakeSession(
+            {"status": "success", "id": []},
+            error_sequence=[
+                client_exceptions.ServerDisconnectedError(),
+                client_exceptions.ServerDisconnectedError(),
+                None,
+            ],
+        )
+        gateway = make_gateway(session)
+        gateway._disconnect_retry_delay = 0
 
         with self.assertRaises(IT600ConnectionError):
+            await gateway._make_encrypted_request(
+                "read",
+                {"requestAttr": "readall"},
+            )
+
+        self.assertEqual(2, len(session.post_calls))
+
+    async def test_make_encrypted_request_does_not_retry_timeouts(self):
+        session = FakeSession(
+            {"status": "success", "id": []},
+            error_sequence=[TimeoutError(), None],
+        )
+        gateway = make_gateway(session)
+        gateway._disconnect_retry_delay = 0
+
+        with (
+            self.assertNoLogs("salus_it600", level="WARNING"),
+            self.assertRaises(IT600ConnectionError),
+        ):
             await gateway._make_encrypted_request(
                 "read",
                 {"requestAttr": "readall"},
@@ -286,7 +337,7 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         gateway = make_gateway(session)
-        gateway._transient_write_retry_delay = 0
+        gateway._disconnect_retry_delay = 0
 
         with self.assertRaises(IT600ConnectionError):
             await gateway._make_encrypted_request(
@@ -934,12 +985,28 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await gateway.set_climate_device_temperature("climate-1", 50.0)
 
-    async def test_callback_registration_rejects_non_callable(self):
+    async def test_out_of_range_setpoint_raises_typed_validation_error(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._climate_devices["climate-1"] = make_climate_device()
+
+        with self.assertRaises(IT600ValidationError) as context:
+            await gateway.set_climate_device_temperature("climate-1", 50.0)
+
+        self.assertIsInstance(context.exception, IT600Error)
+        self.assertIsInstance(context.exception, ValueError)
+        self.assertEqual([], session.post_calls)
+
+    async def test_unknown_device_raises_typed_not_found_error(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)
 
-        with self.assertRaises(TypeError):
-            await gateway.add_switch_update_callback("not-callable")
+        with self.assertRaises(IT600DeviceNotFoundError) as context:
+            await gateway.turn_on_switch_device("missing")
+
+        self.assertIsInstance(context.exception, IT600Error)
+        self.assertIsInstance(context.exception, KeyError)
+        self.assertEqual([], session.post_calls)
 
 
 if __name__ == "__main__":

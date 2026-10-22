@@ -19,3 +19,17 @@ class IT600ConnectionError(IT600Error):
 
 class IT600UnsupportedFirmwareError(IT600Error):
     """Salus gateway firmware uses an unsupported protocol."""
+
+
+class IT600ValidationError(IT600Error, ValueError):
+    """A command argument is not valid for the target device.
+
+    Subclasses ValueError so existing ``except ValueError`` handlers keep working.
+    """
+
+
+class IT600DeviceNotFoundError(IT600Error, KeyError):
+    """The requested device is not in the gateway cache.
+
+    Subclasses KeyError so existing ``except KeyError`` handlers keep working.
+    """

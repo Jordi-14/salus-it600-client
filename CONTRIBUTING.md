@@ -82,7 +82,7 @@ poll_status() readall request
   -> deviceid request for detailed payloads
   -> family parser in salus_it600/parsers/
   -> immutable public model
-  -> internal device dictionaries and callbacks
+  -> internal device dictionaries
 ```
 
 Device families are identified by protocol signatures in the JSON payloads:
@@ -106,7 +106,7 @@ requests are serialized with one `asyncio.Lock`.
 4. Add or update the matching parser under `salus_it600/parsers/`.
 5. Register the parser in `poll_status()` or an existing refresh method.
 6. Add tests for valid payloads, missing optional fields, malformed required
-   fields, callbacks, and write-command state transitions if commandable.
+   fields, and write-command state transitions if commandable.
 7. Confirm the Home Assistant mapping still works when the device is expected
    to appear in Home Assistant.
 

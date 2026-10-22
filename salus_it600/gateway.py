@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Self, TypeVar
 
 import aiohttp
@@ -40,7 +40,9 @@ from .exceptions import (
     IT600AuthenticationError,
     IT600CommandError,
     IT600ConnectionError,
+    IT600DeviceNotFoundError,
     IT600UnsupportedFirmwareError,
+    IT600ValidationError,
 )
 from .models import (
     BinarySensorDevice,
@@ -86,7 +88,14 @@ _SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
 _SQ610_WRITE_HOLD_TYPE = "SetHoldType"
 _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 _SQ610_WRITE_LOCK_KEY = "SetLockKey"
-_TRANSIENT_WRITE_RETRY_DELAY = 0.2
+# The gateway drops idle keep-alive connections without telling the client, so
+# the next request on a reused connection fails with ServerDisconnectedError.
+# One retry opens a fresh connection; reads and writes are both safe to resend.
+_DISCONNECT_RETRY_ATTEMPTS = 2
+_DISCONNECT_RETRY_DELAY = 0.2
+# Consecutive connection failures on the combined detail request before the
+# client stops trying it and keeps using one request per device family.
+_COMBINED_DETAIL_FAILURE_LIMIT = 3
 _FAN_COIL_PRESET_HOLD_TYPES = {
     PRESET_OFF: HoldType.STANDBY,
     PRESET_ECO: HoldType.ECO,
@@ -128,7 +137,6 @@ DeviceT = TypeVar(
     CoverDevice,
     SensorDevice,
 )
-UpdateCallback = Callable[..., Awaitable[None]]
 
 
 def _validate_non_empty_string(value: str, field_name: str) -> str:
@@ -138,7 +146,7 @@ def _validate_non_empty_string(value: str, field_name: str) -> str:
 
     normalized = value.strip()
     if not normalized:
-        raise ValueError(f"{field_name} must not be empty")
+        raise IT600ValidationError(f"{field_name} must not be empty")
 
     return normalized
 
@@ -148,7 +156,7 @@ def _validate_positive_number(value: float, field_name: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{field_name} must be a number")
     if value <= 0:
-        raise ValueError(f"{field_name} must be greater than 0")
+        raise IT600ValidationError(f"{field_name} must be greater than 0")
     return value
 
 
@@ -162,7 +170,7 @@ def _validate_int_range(
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{field_name} must be an integer")
     if value < min_value or value > max_value:
-        raise ValueError(
+        raise IT600ValidationError(
             f"{field_name} must be between {min_value} and {max_value} "
             "(both bounds inclusive)"
         )
@@ -177,7 +185,7 @@ def _validate_supported_value(
     """Validate that a string argument is supported by the target device."""
     normalized = _validate_non_empty_string(value, field_name)
     if supported_values is not None and normalized not in supported_values:
-        raise ValueError(
+        raise IT600ValidationError(
             f"{field_name} must be one of {sorted(supported_values)}, got "
             f"{normalized!r}"
         )
@@ -195,7 +203,7 @@ def _validate_setpoint(
 
     setpoint = float(value)
     if setpoint < min_temp or setpoint > max_temp:
-        raise ValueError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
+        raise IT600ValidationError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
     return setpoint
 
 
@@ -223,22 +231,6 @@ def _active_temperature_write_range(device: ClimateDevice) -> tuple[float, float
         device.min_temp if min_temp is None else min_temp,
         device.max_temp if max_temp is None else max_temp,
     )
-
-
-def _validate_callback(method: UpdateCallback) -> UpdateCallback:
-    """Validate update callback registration input."""
-    if not callable(method):
-        raise TypeError("method must be callable")
-    return method
-
-
-async def _notify_update_callbacks(
-    callbacks: Sequence[UpdateCallback],
-    device_id: str,
-) -> None:
-    """Notify registered update callbacks for one refreshed device."""
-    for update_callback in callbacks:
-        await update_callback(device_id=device_id)
 
 
 def _gateway_mac_from_readall(response: dict[str, Any]) -> str | None:
@@ -336,6 +328,63 @@ def _device_status_request_items(
     return request_items
 
 
+DetailIndex = dict[Any, list[dict[str, Any]]]
+
+
+def _detail_items_by_device(items: list[dict[str, Any]]) -> DetailIndex:
+    """Group detail payloads by UniID, keeping one per (UniID, Endpoint)."""
+    grouped: DetailIndex = {}
+    seen: set[tuple[Any, Any]] = set()
+    for item in items:
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        key = (data.get("UniID"), data.get("Endpoint"))
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped.setdefault(key[0], []).append(item)
+    return grouped
+
+
+def _find_detail_items(
+    grouped: Mapping[Any, list[dict[str, Any]]],
+    request_data: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the detail payloads that answer one deviceid request item.
+
+    Discovery summaries do not always carry an Endpoint while detail payloads
+    do. Without an Endpoint the gateway answers with every endpoint of the
+    device (for example both channels of a two-channel switch), so all of them
+    are returned. With an Endpoint only that endpoint matches.
+    """
+    items = grouped.get(request_data.get("UniID"), [])
+    if "Endpoint" not in request_data:
+        return list(items)
+    endpoint = request_data["Endpoint"]
+    return [item for item in items if item["data"].get("Endpoint") == endpoint]
+
+
+def _select_detail_items(
+    grouped: Mapping[Any, list[dict[str, Any]]],
+    request_items: list[dict[str, dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Return the detail payloads for a family, each payload at most once.
+
+    Overlapping discovery entries (one with and one without an Endpoint) match
+    the same payload, which must not be parsed twice.
+    """
+    selected: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any]] = set()
+    for request_item in request_items:
+        for item in _find_detail_items(grouped, request_item["data"]):
+            key = (item["data"].get("UniID"), item["data"].get("Endpoint"))
+            if key not in seen:
+                seen.add(key)
+                selected.append(item)
+    return selected
+
+
 def _flatten_dict(data: dict[str, Any]) -> dict[str, Any]:
     """Flatten nested gateway payload dictionaries into a single key/value map."""
     flattened: dict[str, Any] = {}
@@ -392,7 +441,7 @@ class IT600Gateway:
         self._host = host
         self._port = port
         self._request_timeout = request_timeout
-        self._transient_write_retry_delay = _TRANSIENT_WRITE_RETRY_DELAY
+        self._disconnect_retry_delay = _DISCONNECT_RETRY_DELAY
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
 
@@ -402,26 +451,27 @@ class IT600Gateway:
         self._gateway_device: GatewayDevice | None = None
 
         self._climate_devices: dict[str, ClimateDevice] = {}
-        self._climate_update_callbacks: list[UpdateCallback] = []
 
         self._binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._climate_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._binary_sensor_diagnostic_devices: dict[str, BinarySensorDevice] = {}
         self._wiring_centre_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
-        self._binary_sensor_update_callbacks: list[UpdateCallback] = []
 
         self._switch_devices: dict[str, SwitchDevice] = {}
-        self._switch_update_callbacks: list[UpdateCallback] = []
 
         self._cover_devices: dict[str, CoverDevice] = {}
-        self._cover_update_callbacks: list[UpdateCallback] = []
 
         self._sensor_devices: dict[str, SensorDevice] = {}
+        # Devices whose parse failure was already logged with a traceback.
+        self._logged_parse_failures: set[tuple[str, str]] = set()
+        # Detail payloads fetched for the whole poll in one deviceid request.
+        self._prefetched_details: DetailIndex | None = None
+        self._combined_detail_requests = True
+        self._combined_detail_failures = 0
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
         self._wiring_centre_sensor_devices: dict[str, SensorDevice] = {}
-        self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
         """Validate gateway access and return the gateway MAC address.
@@ -439,7 +489,7 @@ class IT600Gateway:
             self._session = aiohttp.ClientSession()
             self._close_session = True
 
-        if type(self._encryptor) is IT600Encryptor:
+        if self._protocol is None:
             return await self._connect_with_protocol_detection()
 
         try:
@@ -480,6 +530,31 @@ class IT600Gateway:
                 "Error occurred while communicating with iT600 gateway: "
                 "check if you have specified EUID correctly"
             ) from ae
+
+    def _log_parse_failure(
+        self,
+        device_type: str,
+        unique_id: Any,
+        err: Exception,
+    ) -> None:
+        """Log a device parse failure.
+
+        A malformed device fails on every poll, so the traceback is logged once
+        per device and later failures go to debug level.
+        """
+        key = (device_type, str(unique_id))
+        if key in self._logged_parse_failures:
+            _LOGGER.debug(
+                "Failed to parse %s device %s: %r", device_type, unique_id, err
+            )
+            return
+        self._logged_parse_failures.add(key)
+        _LOGGER.error(
+            "Failed to parse %s device %s; repeats are logged at debug level",
+            device_type,
+            unique_id,
+            exc_info=err,
+        )
 
     def _protocol_candidates(self) -> list[GatewayProtocol]:
         """Return protocol candidates in the order they should be attempted."""
@@ -569,13 +644,24 @@ class IT600Gateway:
         ) as resp:
             await resp.read()
 
-    async def poll_status(self, send_callback: bool = False) -> None:
+    @property
+    def combined_detail_requests(self) -> bool:
+        """Return whether polls fetch all device details in one request.
+
+        Starts True and switches to False for the rest of this client's life
+        if the gateway rejects the combined request, leaves devices out of the
+        answer, or drops it repeatedly.
+        """
+        return self._combined_detail_requests
+
+    async def poll_status(self) -> None:
         """Refresh all known device collections from the gateway.
 
-        The method performs a `readall` discovery request, then detailed
-        `deviceid` requests for each supported device family. Invalid individual
-        devices are logged and skipped; gateway communication errors propagate
-        to the caller.
+        The method performs a `readall` discovery request, then fetches the
+        detailed status of every device. It asks for all devices in one
+        `deviceid` request and falls back to one request per device family when
+        the gateway does not handle that. Invalid individual devices are logged
+        and skipped; gateway communication errors propagate to the caller.
         """
 
         all_devices = await self._make_encrypted_request(
@@ -585,35 +671,120 @@ class IT600Gateway:
         device_items = _response_items(all_devices, "readall")
 
         gateway_devices = list(filter(lambda x: "sGateway" in x, device_items))
-        await self._refresh_gateway_device(gateway_devices, send_callback)
-
         climate_devices = list(
             filter(lambda x: ("sIT600TH" in x) or ("sTherS" in x), device_items)
         )
-        await self._refresh_climate_devices(climate_devices, send_callback)
-
         wiring_centres = list(filter(lambda x: "sIT600WC" in x, device_items))
-        await self._refresh_wiring_centre_devices(wiring_centres, send_callback)
-
         binary_sensors = list(filter(is_binary_sensor_summary, device_items))
-        await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
-
         sensors = list(filter(lambda x: "sTempS" in x, device_items))
-        await self._refresh_sensor_devices(sensors, send_callback)
-
         switches = list(filter(lambda x: "sOnOffS" in x, device_items))
-        await self._refresh_switch_devices(switches, send_callback)
-
         covers = list(filter(lambda x: "sLevelS" in x, device_items))
-        await self._refresh_cover_devices(covers, send_callback)
-
         meters = list(
             filter(
                 lambda x: "sMeterS" in x and "sOnOffS" not in x,
                 device_items,
             )
         )
-        await self._refresh_meter_devices(meters, send_callback)
+        families = [
+            gateway_devices,
+            climate_devices,
+            wiring_centres,
+            binary_sensors,
+            sensors,
+            switches,
+            covers,
+            meters,
+        ]
+
+        self._prefetched_details = await self._prefetch_device_details(families)
+        try:
+            await self._refresh_gateway_device(gateway_devices)
+            await self._refresh_climate_devices(climate_devices)
+            await self._refresh_wiring_centre_devices(wiring_centres)
+            await self._refresh_binary_sensor_devices(binary_sensors)
+            await self._refresh_sensor_devices(sensors)
+            await self._refresh_switch_devices(switches)
+            await self._refresh_cover_devices(covers)
+            await self._refresh_meter_devices(meters)
+        finally:
+            self._prefetched_details = None
+
+    async def _prefetch_device_details(
+        self,
+        families: list[list[Any]],
+    ) -> DetailIndex | None:
+        """Fetch every device's detail payload in one deviceid request.
+
+        Returns None, so each family is requested separately, when combined
+        requests are disabled, when there is nothing to gain, or when the
+        combined request fails. A rejected or incomplete answer disables the
+        combined request for good; dropped connections disable it after a few
+        consecutive failures.
+        """
+        if not self._combined_detail_requests:
+            return None
+        if sum(1 for family in families if family) < 2:
+            return None
+
+        request_items: list[dict[str, dict[str, Any]]] = []
+        seen: set[tuple[Any, Any]] = set()
+        for family in families:
+            for device in family:
+                data = device.get("data") if isinstance(device, dict) else None
+                if not isinstance(data, dict):
+                    continue
+                key = (data.get("UniID"), data.get("Endpoint"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                request_items.append({"data": data})
+        if not request_items:
+            return None
+
+        try:
+            response = await self._make_encrypted_request(
+                "read",
+                {"requestAttr": "deviceid", "id": request_items},
+            )
+            items = _response_items(response, "combined device detail")
+        except IT600CommandError as err:
+            self._disable_combined_detail_requests(f"gateway rejected it: {err}")
+            return None
+        except IT600ConnectionError as err:
+            self._combined_detail_failures += 1
+            _LOGGER.debug(
+                "Combined device detail request failed (%s/%s): %s",
+                self._combined_detail_failures,
+                _COMBINED_DETAIL_FAILURE_LIMIT,
+                err,
+            )
+            if self._combined_detail_failures >= _COMBINED_DETAIL_FAILURE_LIMIT:
+                self._disable_combined_detail_requests("repeated connection failures")
+            return None
+
+        indexed = _detail_items_by_device(items)
+        missing = [
+            item["data"].get("UniID")
+            for item in request_items
+            if not _find_detail_items(indexed, item["data"])
+        ]
+        if missing:
+            self._disable_combined_detail_requests(
+                f"answer left out {len(missing)} of {len(request_items)} devices"
+            )
+            return None
+
+        self._combined_detail_failures = 0
+        return indexed
+
+    def _disable_combined_detail_requests(self, reason: str) -> None:
+        """Switch to one deviceid request per device family."""
+        self._combined_detail_requests = False
+        _LOGGER.info(
+            "Requesting Salus device details per device family from now on "
+            "because the combined request did not work (%s)",
+            reason,
+        )
 
     async def _refresh_device_collection(
         self,
@@ -621,8 +792,6 @@ class IT600Gateway:
         device_type: str,
         state_attr: str,
         parser: Callable[[dict[str, Any]], Any | None],
-        callback: UpdateCallback,
-        send_callback: bool = False,
     ) -> None:
         """Refresh one device collection using a parser for that device type."""
         local_devices: dict[str, Any] = {}
@@ -631,24 +800,14 @@ class IT600Gateway:
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 device = parser(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse %s device %s",
-                    device_type,
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure(device_type, unique_id, err)
                 continue
 
             if device is None:
                 continue
 
-            await self._store_refreshed_device(
-                local_devices,
-                state_attr,
-                callback,
-                device,
-                send_callback,
-            )
+            local_devices[device.unique_id] = device
 
         setattr(self, state_attr, local_devices)
         _LOGGER.debug(
@@ -670,30 +829,19 @@ class IT600Gateway:
         if not request_items:
             return []
 
+        prefetched = self._prefetched_details
+        if prefetched is not None:
+            return _select_detail_items(prefetched, request_items)
+
         status = await self._make_encrypted_request(
             "read",
             {"requestAttr": "deviceid", "id": request_items},
         )
         return _response_items(status, f"{device_type} device detail")
 
-    async def _store_refreshed_device(
-        self,
-        local_devices: dict[str, Any],
-        state_attr: str,
-        callback: UpdateCallback,
-        device: Any,
-        send_callback: bool,
-    ) -> None:
-        """Store one parsed device and optionally notify subscribers."""
-        local_devices[device.unique_id] = device
-        if send_callback:
-            getattr(self, state_attr)[device.unique_id] = device
-            await callback(device.unique_id)
-
     async def _refresh_gateway_device(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_device: GatewayDevice | None = None
 
@@ -720,8 +868,8 @@ class IT600Gateway:
                         "OTAFirmwareVersion_d", None
                     ),
                 )
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to poll gateway %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("gateway", unique_id, err)
 
         self._gateway_device = local_device
         _LOGGER.debug("Refreshed gateway device")
@@ -729,21 +877,17 @@ class IT600Gateway:
     async def _refresh_cover_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         await self._refresh_device_collection(
             devices,
             "cover",
             "_cover_devices",
             parse_cover_device,
-            self._send_cover_update_callback,
-            send_callback,
         )
 
     async def _refresh_switch_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, SwitchDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
@@ -753,27 +897,15 @@ class IT600Gateway:
             try:
                 device = parse_switch_device(device_status)
                 sensors = parse_switch_sensor_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to parse switch device %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("switch", unique_id, err)
                 continue
 
             if device is not None:
-                await self._store_refreshed_device(
-                    local_devices,
-                    "_switch_devices",
-                    self._send_switch_update_callback,
-                    device,
-                    send_callback,
-                )
+                local_devices[device.unique_id] = device
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_switch_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                sensor_devices[sensor.unique_id] = sensor
 
         self._switch_devices = local_devices
         self._switch_sensor_devices = sensor_devices
@@ -782,7 +914,6 @@ class IT600Gateway:
     async def _refresh_sensor_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, SensorDevice] = {}
 
@@ -790,18 +921,12 @@ class IT600Gateway:
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 sensors = parse_sensor_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to parse sensor device %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("sensor", unique_id, err)
                 continue
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    local_devices,
-                    "_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                local_devices[sensor.unique_id] = sensor
 
         self._sensor_devices = local_devices
         _LOGGER.debug("Refreshed %s sensor devices", len(local_devices))
@@ -809,7 +934,6 @@ class IT600Gateway:
     async def _refresh_meter_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         sensor_devices: dict[str, SensorDevice] = {}
 
@@ -817,18 +941,12 @@ class IT600Gateway:
             unique_id = device_status.get("data", {}).get("UniID")
             try:
                 sensors = parse_meter_sensor_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception("Failed to parse meter device %s", unique_id)
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("meter", unique_id, err)
                 continue
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_meter_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                sensor_devices[sensor.unique_id] = sensor
 
         self._meter_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s meter sensor devices", len(sensor_devices))
@@ -836,7 +954,6 @@ class IT600Gateway:
     async def _refresh_binary_sensor_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, BinarySensorDevice] = {}
         diagnostic_devices: dict[str, BinarySensorDevice] = {}
@@ -849,30 +966,15 @@ class IT600Gateway:
             try:
                 device = parse_binary_sensor_device(device_status)
                 diagnostics = parse_binary_diagnostic_devices(device_status)
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse binary sensor device %s",
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("binary sensor", unique_id, err)
                 continue
 
             if device is not None:
-                await self._store_refreshed_device(
-                    local_devices,
-                    "_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    device,
-                    send_callback,
-                )
+                local_devices[device.unique_id] = device
 
             for diagnostic in diagnostics:
-                await self._store_refreshed_device(
-                    diagnostic_devices,
-                    "_binary_sensor_diagnostic_devices",
-                    self._send_binary_sensor_update_callback,
-                    diagnostic,
-                    send_callback,
-                )
+                diagnostic_devices[diagnostic.unique_id] = diagnostic
 
         self._binary_sensor_devices = local_devices
         self._binary_sensor_diagnostic_devices = diagnostic_devices
@@ -881,7 +983,6 @@ class IT600Gateway:
     async def _refresh_climate_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, ClimateDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
@@ -889,9 +990,8 @@ class IT600Gateway:
 
         # Signal-quality readings are absent from most polls even for healthy
         # devices, so the previous collection is handed to the parser to carry
-        # the last known value forward. Snapshotting it keeps the lookup stable
-        # while the `send_callback` path writes this poll's devices into it.
-        previous_sensors = dict(self._climate_sensor_devices)
+        # the last known value forward.
+        previous_sensors = self._climate_sensor_devices
 
         for device_status in await self._device_detail_statuses(devices, "climate"):
             unique_id = device_status.get("data", {}).get("UniID")
@@ -908,38 +1008,17 @@ class IT600Gateway:
                     device_status,
                     device,
                 )
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse climate device %s",
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("climate", unique_id, err)
                 continue
 
-            await self._store_refreshed_device(
-                local_devices,
-                "_climate_devices",
-                self._send_climate_update_callback,
-                device,
-                send_callback,
-            )
+            local_devices[device.unique_id] = device
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_climate_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                sensor_devices[sensor.unique_id] = sensor
 
             for binary_sensor in binary_sensors:
-                await self._store_refreshed_device(
-                    binary_devices,
-                    "_climate_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    binary_sensor,
-                    send_callback,
-                )
+                binary_devices[binary_sensor.unique_id] = binary_sensor
 
         self._climate_devices = local_devices
         self._climate_sensor_devices = sensor_devices
@@ -949,16 +1028,14 @@ class IT600Gateway:
     async def _refresh_wiring_centre_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         binary_devices: dict[str, BinarySensorDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
 
         # Signal-quality readings are absent from most polls even for healthy
         # devices, so the previous collection is handed to the parser to carry
-        # the last known value forward. Snapshotting it keeps the lookup stable
-        # while the `send_callback` path writes this poll's devices into it.
-        previous_sensors = dict(self._wiring_centre_sensor_devices)
+        # the last known value forward.
+        previous_sensors = self._wiring_centre_sensor_devices
 
         for device_status in await self._device_detail_statuses(
             devices,
@@ -974,71 +1051,22 @@ class IT600Gateway:
                     device_status,
                     previous_sensors,
                 )
-            except PARSING_EXCEPTIONS:
-                _LOGGER.exception(
-                    "Failed to parse wiring centre device %s",
-                    unique_id,
-                )
+            except PARSING_EXCEPTIONS as err:
+                self._log_parse_failure("wiring centre", unique_id, err)
                 continue
 
             if connectivity is not None:
-                await self._store_refreshed_device(
-                    binary_devices,
-                    "_wiring_centre_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    connectivity,
-                    send_callback,
-                )
+                binary_devices[connectivity.unique_id] = connectivity
 
             for problem_sensor in problem_sensors:
-                await self._store_refreshed_device(
-                    binary_devices,
-                    "_wiring_centre_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    problem_sensor,
-                    send_callback,
-                )
+                binary_devices[problem_sensor.unique_id] = problem_sensor
 
             for signal_sensor in signal_sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_wiring_centre_sensor_devices",
-                    self._send_sensor_update_callback,
-                    signal_sensor,
-                    send_callback,
-                )
+                sensor_devices[signal_sensor.unique_id] = signal_sensor
 
         self._wiring_centre_binary_sensor_devices = binary_devices
         self._wiring_centre_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s wiring centre devices", len(binary_devices))
-
-    async def _send_climate_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._climate_update_callbacks, device_id)
-
-    async def _send_binary_sensor_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(
-            self._binary_sensor_update_callbacks,
-            device_id,
-        )
-
-    async def _send_switch_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._switch_update_callbacks, device_id)
-
-    async def _send_cover_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._cover_update_callbacks, device_id)
-
-    async def _send_sensor_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._sensor_update_callbacks, device_id)
 
     @staticmethod
     def _validate_device_id(device_id: str) -> str:
@@ -1053,7 +1081,7 @@ class IT600Gateway:
         device_id = self._validate_device_id(device_id)
         device = devices.get(device_id)
         if device is None:
-            raise KeyError(
+            raise IT600DeviceNotFoundError(
                 DEVICE_NOT_FOUND_ERROR.format(
                     device_type=device_type,
                     device_id=device_id,
@@ -1154,8 +1182,9 @@ class IT600Gateway:
                 cached SQ610 climate devices are fetched.
 
         Raises:
-            KeyError: If a requested device is not in the climate cache.
-            ValueError: If a requested device is not an SQ610 model.
+            IT600DeviceNotFoundError: If a requested device is not in the
+                climate cache.
+            IT600ValidationError: If a requested device is not an SQ610 model.
             IT600ConnectionError: If the gateway cannot be reached.
             IT600CommandError: If the gateway response is invalid or rejected.
         """
@@ -1177,7 +1206,7 @@ class IT600Gateway:
                     "climate",
                 )
                 if not is_sq610_model(device.model):
-                    raise ValueError(f"climate device {device_id!r} is not an SQ610")
+                    raise IT600ValidationError(f"climate device {device_id!r} is not an SQ610")
                 devices.append(device)
 
         if not devices:
@@ -1334,7 +1363,7 @@ class IT600Gateway:
                     "sIT600TH": payload
                 }
             else:
-                raise ValueError(
+                raise IT600ValidationError(
                     "mode must be one of ['cool', 'heat', 'off'] for SQ610 devices"
                 )
         elif is_trv_model(device.model):
@@ -1359,7 +1388,7 @@ class IT600Gateway:
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         if device.fan_modes is None:
-            raise ValueError(f"climate device {device_id!r} does not support fan modes")
+            raise IT600ValidationError(f"climate device {device_id!r} does not support fan modes")
         mode = _validate_supported_value(mode, "mode", device.fan_modes)
 
         request_data = {"sFanS": {"SetFanMode": _FAN_MODES.get(mode, FanMode.OFF)}}
@@ -1425,31 +1454,6 @@ class IT600Gateway:
 
         return round(number * 2) / 2
 
-    async def add_climate_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after climate device refreshes."""
-
-        self._climate_update_callbacks.append(_validate_callback(method))
-
-    async def add_binary_sensor_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after binary sensor refreshes."""
-
-        self._binary_sensor_update_callbacks.append(_validate_callback(method))
-
-    async def add_switch_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after switch refreshes."""
-
-        self._switch_update_callbacks.append(_validate_callback(method))
-
-    async def add_cover_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after cover refreshes."""
-
-        self._cover_update_callbacks.append(_validate_callback(method))
-
-    async def add_sensor_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after sensor refreshes."""
-
-        self._sensor_update_callbacks.append(_validate_callback(method))
-
     async def _make_encrypted_request(
         self,
         command: str,
@@ -1464,7 +1468,7 @@ class IT600Gateway:
 
             request_url = f"http://{self._host}:{self._port}/deviceid/{command}"
             request_body_json = json.dumps(request_body)
-            retry_attempts = 2 if command == "write" else 1
+            retry_attempts = _DISCONNECT_RETRY_ATTEMPTS
 
             if self._debug:
                 _LOGGER.debug(
@@ -1479,10 +1483,11 @@ class IT600Gateway:
             for attempt in range(retry_attempts):
                 if attempt:
                     _LOGGER.debug(
-                        "Gateway disconnected during write request; retrying once"
+                        "Gateway disconnected during %s request; retrying once",
+                        command,
                     )
-                    if self._transient_write_retry_delay > 0:
-                        await asyncio.sleep(self._transient_write_retry_delay)
+                    if self._disconnect_retry_delay > 0:
+                        await asyncio.sleep(self._disconnect_retry_delay)
 
                 try:
                     async with self._session.post(
@@ -1527,7 +1532,7 @@ class IT600Gateway:
                         repr_request_body = repr(request_body)
                         repr_response_body = repr(response_json)
 
-                        _LOGGER.error("%s failed: %s", command, repr_request_body)
+                        _LOGGER.debug("%s failed: %s", command, repr_request_body)
                         raise IT600CommandError(
                             f"iT600 gateway rejected '{command}' command with "
                             f"content '{repr_request_body}' and response "
@@ -1542,7 +1547,7 @@ class IT600Gateway:
                         "Error occurred while communicating with iT600 gateway"
                     ) from e
                 except TimeoutError as e:
-                    _LOGGER.error("Timeout while connecting to gateway: %s", e)
+                    _LOGGER.debug("Timeout during %s request to gateway", command)
                     raise IT600ConnectionError(
                         "Error occurred while communicating with iT600 gateway: timeout"
                     ) from e
@@ -1556,7 +1561,7 @@ class IT600Gateway:
                         "Error occurred while communicating with iT600 gateway"
                     ) from e
                 except json.JSONDecodeError as e:
-                    _LOGGER.error("Gateway returned invalid JSON for %s command", command)
+                    _LOGGER.debug("Gateway returned invalid JSON for %s command", command)
                     raise IT600CommandError(
                         "Invalid JSON response received from iT600 gateway"
                     ) from e

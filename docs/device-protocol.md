@@ -9,10 +9,10 @@ API, so these notes are based on observed UG600 local Wi-Fi payloads.
 ```text
 readall
   -> summary payloads with protocol section hints
-  -> one deviceid request per supported device family
+  -> one deviceid request for every device (falls back to one request per
+     device family if the gateway rejects it or leaves devices out)
   -> detailed payloads parsed into library models
   -> internal state dictionaries replaced atomically
-  -> optional update callbacks per refreshed device
 ```
 
 The gateway is sensitive to concurrent local commands, so the client serializes
@@ -195,7 +195,6 @@ protocol level, the checklist is:
 2. Add or update model constants in `salus_it600/device_models.py`.
 3. Add or update the parser in the matching `salus_it600/parsers/` module.
 4. Register the parser in `poll_status()` or an existing refresh method.
-5. Add tests for valid payloads, missing fields, malformed data, and callback
-   behavior.
+5. Add tests for valid payloads, missing fields, and malformed data.
 6. Keep write command values in `salus_it600.const` or model-specific constants;
    do not introduce new magic integers inline.
