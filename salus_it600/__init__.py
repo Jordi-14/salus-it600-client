@@ -7,15 +7,21 @@ from .exceptions import (
     IT600AuthenticationError,
     IT600CommandError,
     IT600ConnectionError,
+    IT600DeviceNotFoundError,
+    IT600Error,
     IT600UnsupportedFirmwareError,
+    IT600ValidationError,
 )
 
 __all__ = [
     "IT600AuthenticationError",
     "IT600CommandError",
     "IT600ConnectionError",
+    "IT600DeviceNotFoundError",
+    "IT600Error",
     "IT600Gateway",
     "IT600UnsupportedFirmwareError",
+    "IT600ValidationError",
     "__version__",
 ]
 

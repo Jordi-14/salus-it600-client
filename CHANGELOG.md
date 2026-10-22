@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+Breaking changes (release as 0.7.0):
+
+- Remove the unused update-callback API (`add_*_update_callback()` and
+  `poll_status(send_callback=...)`). Call `poll_status()` and read the
+  `get_*_devices()` caches instead.
+
+Improvements:
+
+- Add `IT600ValidationError` (also a `ValueError`) for command arguments the
+  target device does not support, and `IT600DeviceNotFoundError` (also a
+  `KeyError`) for device IDs missing from the cache. Existing `except
+  ValueError` / `except KeyError` handlers keep working. `IT600Error` and both
+  new exceptions are exported from `salus_it600`.
+- `connect()` reuses an already-detected protocol instead of probing again.
+- Use the vendor's fault descriptions for the it600WC wiring centre registers.
+
 ## 0.6.2 - 2026-10-07
 
 - Add RSSI and LQI diagnostic sensors for thermostats, retaining the last reading

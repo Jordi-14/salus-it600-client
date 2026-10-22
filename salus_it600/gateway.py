@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Self, TypeVar
 
 import aiohttp
@@ -40,7 +40,9 @@ from .exceptions import (
     IT600AuthenticationError,
     IT600CommandError,
     IT600ConnectionError,
+    IT600DeviceNotFoundError,
     IT600UnsupportedFirmwareError,
+    IT600ValidationError,
 )
 from .models import (
     BinarySensorDevice,
@@ -128,7 +130,6 @@ DeviceT = TypeVar(
     CoverDevice,
     SensorDevice,
 )
-UpdateCallback = Callable[..., Awaitable[None]]
 
 
 def _validate_non_empty_string(value: str, field_name: str) -> str:
@@ -138,7 +139,7 @@ def _validate_non_empty_string(value: str, field_name: str) -> str:
 
     normalized = value.strip()
     if not normalized:
-        raise ValueError(f"{field_name} must not be empty")
+        raise IT600ValidationError(f"{field_name} must not be empty")
 
     return normalized
 
@@ -148,7 +149,7 @@ def _validate_positive_number(value: float, field_name: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{field_name} must be a number")
     if value <= 0:
-        raise ValueError(f"{field_name} must be greater than 0")
+        raise IT600ValidationError(f"{field_name} must be greater than 0")
     return value
 
 
@@ -162,7 +163,7 @@ def _validate_int_range(
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{field_name} must be an integer")
     if value < min_value or value > max_value:
-        raise ValueError(
+        raise IT600ValidationError(
             f"{field_name} must be between {min_value} and {max_value} "
             "(both bounds inclusive)"
         )
@@ -177,7 +178,7 @@ def _validate_supported_value(
     """Validate that a string argument is supported by the target device."""
     normalized = _validate_non_empty_string(value, field_name)
     if supported_values is not None and normalized not in supported_values:
-        raise ValueError(
+        raise IT600ValidationError(
             f"{field_name} must be one of {sorted(supported_values)}, got "
             f"{normalized!r}"
         )
@@ -195,7 +196,7 @@ def _validate_setpoint(
 
     setpoint = float(value)
     if setpoint < min_temp or setpoint > max_temp:
-        raise ValueError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
+        raise IT600ValidationError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
     return setpoint
 
 
@@ -223,22 +224,6 @@ def _active_temperature_write_range(device: ClimateDevice) -> tuple[float, float
         device.min_temp if min_temp is None else min_temp,
         device.max_temp if max_temp is None else max_temp,
     )
-
-
-def _validate_callback(method: UpdateCallback) -> UpdateCallback:
-    """Validate update callback registration input."""
-    if not callable(method):
-        raise TypeError("method must be callable")
-    return method
-
-
-async def _notify_update_callbacks(
-    callbacks: Sequence[UpdateCallback],
-    device_id: str,
-) -> None:
-    """Notify registered update callbacks for one refreshed device."""
-    for update_callback in callbacks:
-        await update_callback(device_id=device_id)
 
 
 def _gateway_mac_from_readall(response: dict[str, Any]) -> str | None:
@@ -402,26 +387,21 @@ class IT600Gateway:
         self._gateway_device: GatewayDevice | None = None
 
         self._climate_devices: dict[str, ClimateDevice] = {}
-        self._climate_update_callbacks: list[UpdateCallback] = []
 
         self._binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._climate_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._binary_sensor_diagnostic_devices: dict[str, BinarySensorDevice] = {}
         self._wiring_centre_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
-        self._binary_sensor_update_callbacks: list[UpdateCallback] = []
 
         self._switch_devices: dict[str, SwitchDevice] = {}
-        self._switch_update_callbacks: list[UpdateCallback] = []
 
         self._cover_devices: dict[str, CoverDevice] = {}
-        self._cover_update_callbacks: list[UpdateCallback] = []
 
         self._sensor_devices: dict[str, SensorDevice] = {}
         self._climate_sensor_devices: dict[str, SensorDevice] = {}
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
         self._wiring_centre_sensor_devices: dict[str, SensorDevice] = {}
-        self._sensor_update_callbacks: list[UpdateCallback] = []
 
     async def connect(self) -> str:
         """Validate gateway access and return the gateway MAC address.
@@ -439,7 +419,7 @@ class IT600Gateway:
             self._session = aiohttp.ClientSession()
             self._close_session = True
 
-        if type(self._encryptor) is IT600Encryptor:
+        if self._protocol is None:
             return await self._connect_with_protocol_detection()
 
         try:
@@ -569,7 +549,7 @@ class IT600Gateway:
         ) as resp:
             await resp.read()
 
-    async def poll_status(self, send_callback: bool = False) -> None:
+    async def poll_status(self) -> None:
         """Refresh all known device collections from the gateway.
 
         The method performs a `readall` discovery request, then detailed
@@ -585,27 +565,27 @@ class IT600Gateway:
         device_items = _response_items(all_devices, "readall")
 
         gateway_devices = list(filter(lambda x: "sGateway" in x, device_items))
-        await self._refresh_gateway_device(gateway_devices, send_callback)
+        await self._refresh_gateway_device(gateway_devices)
 
         climate_devices = list(
             filter(lambda x: ("sIT600TH" in x) or ("sTherS" in x), device_items)
         )
-        await self._refresh_climate_devices(climate_devices, send_callback)
+        await self._refresh_climate_devices(climate_devices)
 
         wiring_centres = list(filter(lambda x: "sIT600WC" in x, device_items))
-        await self._refresh_wiring_centre_devices(wiring_centres, send_callback)
+        await self._refresh_wiring_centre_devices(wiring_centres)
 
         binary_sensors = list(filter(is_binary_sensor_summary, device_items))
-        await self._refresh_binary_sensor_devices(binary_sensors, send_callback)
+        await self._refresh_binary_sensor_devices(binary_sensors)
 
         sensors = list(filter(lambda x: "sTempS" in x, device_items))
-        await self._refresh_sensor_devices(sensors, send_callback)
+        await self._refresh_sensor_devices(sensors)
 
         switches = list(filter(lambda x: "sOnOffS" in x, device_items))
-        await self._refresh_switch_devices(switches, send_callback)
+        await self._refresh_switch_devices(switches)
 
         covers = list(filter(lambda x: "sLevelS" in x, device_items))
-        await self._refresh_cover_devices(covers, send_callback)
+        await self._refresh_cover_devices(covers)
 
         meters = list(
             filter(
@@ -613,7 +593,7 @@ class IT600Gateway:
                 device_items,
             )
         )
-        await self._refresh_meter_devices(meters, send_callback)
+        await self._refresh_meter_devices(meters)
 
     async def _refresh_device_collection(
         self,
@@ -621,8 +601,6 @@ class IT600Gateway:
         device_type: str,
         state_attr: str,
         parser: Callable[[dict[str, Any]], Any | None],
-        callback: UpdateCallback,
-        send_callback: bool = False,
     ) -> None:
         """Refresh one device collection using a parser for that device type."""
         local_devices: dict[str, Any] = {}
@@ -642,13 +620,7 @@ class IT600Gateway:
             if device is None:
                 continue
 
-            await self._store_refreshed_device(
-                local_devices,
-                state_attr,
-                callback,
-                device,
-                send_callback,
-            )
+            local_devices[device.unique_id] = device
 
         setattr(self, state_attr, local_devices)
         _LOGGER.debug(
@@ -676,24 +648,9 @@ class IT600Gateway:
         )
         return _response_items(status, f"{device_type} device detail")
 
-    async def _store_refreshed_device(
-        self,
-        local_devices: dict[str, Any],
-        state_attr: str,
-        callback: UpdateCallback,
-        device: Any,
-        send_callback: bool,
-    ) -> None:
-        """Store one parsed device and optionally notify subscribers."""
-        local_devices[device.unique_id] = device
-        if send_callback:
-            getattr(self, state_attr)[device.unique_id] = device
-            await callback(device.unique_id)
-
     async def _refresh_gateway_device(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_device: GatewayDevice | None = None
 
@@ -729,21 +686,17 @@ class IT600Gateway:
     async def _refresh_cover_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         await self._refresh_device_collection(
             devices,
             "cover",
             "_cover_devices",
             parse_cover_device,
-            self._send_cover_update_callback,
-            send_callback,
         )
 
     async def _refresh_switch_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, SwitchDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
@@ -758,22 +711,10 @@ class IT600Gateway:
                 continue
 
             if device is not None:
-                await self._store_refreshed_device(
-                    local_devices,
-                    "_switch_devices",
-                    self._send_switch_update_callback,
-                    device,
-                    send_callback,
-                )
+                local_devices[device.unique_id] = device
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_switch_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                sensor_devices[sensor.unique_id] = sensor
 
         self._switch_devices = local_devices
         self._switch_sensor_devices = sensor_devices
@@ -782,7 +723,6 @@ class IT600Gateway:
     async def _refresh_sensor_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, SensorDevice] = {}
 
@@ -795,13 +735,7 @@ class IT600Gateway:
                 continue
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    local_devices,
-                    "_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                local_devices[sensor.unique_id] = sensor
 
         self._sensor_devices = local_devices
         _LOGGER.debug("Refreshed %s sensor devices", len(local_devices))
@@ -809,7 +743,6 @@ class IT600Gateway:
     async def _refresh_meter_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         sensor_devices: dict[str, SensorDevice] = {}
 
@@ -822,13 +755,7 @@ class IT600Gateway:
                 continue
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_meter_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                sensor_devices[sensor.unique_id] = sensor
 
         self._meter_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s meter sensor devices", len(sensor_devices))
@@ -836,7 +763,6 @@ class IT600Gateway:
     async def _refresh_binary_sensor_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, BinarySensorDevice] = {}
         diagnostic_devices: dict[str, BinarySensorDevice] = {}
@@ -857,22 +783,10 @@ class IT600Gateway:
                 continue
 
             if device is not None:
-                await self._store_refreshed_device(
-                    local_devices,
-                    "_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    device,
-                    send_callback,
-                )
+                local_devices[device.unique_id] = device
 
             for diagnostic in diagnostics:
-                await self._store_refreshed_device(
-                    diagnostic_devices,
-                    "_binary_sensor_diagnostic_devices",
-                    self._send_binary_sensor_update_callback,
-                    diagnostic,
-                    send_callback,
-                )
+                diagnostic_devices[diagnostic.unique_id] = diagnostic
 
         self._binary_sensor_devices = local_devices
         self._binary_sensor_diagnostic_devices = diagnostic_devices
@@ -881,7 +795,6 @@ class IT600Gateway:
     async def _refresh_climate_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         local_devices: dict[str, ClimateDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
@@ -889,9 +802,8 @@ class IT600Gateway:
 
         # Signal-quality readings are absent from most polls even for healthy
         # devices, so the previous collection is handed to the parser to carry
-        # the last known value forward. Snapshotting it keeps the lookup stable
-        # while the `send_callback` path writes this poll's devices into it.
-        previous_sensors = dict(self._climate_sensor_devices)
+        # the last known value forward.
+        previous_sensors = self._climate_sensor_devices
 
         for device_status in await self._device_detail_statuses(devices, "climate"):
             unique_id = device_status.get("data", {}).get("UniID")
@@ -915,31 +827,13 @@ class IT600Gateway:
                 )
                 continue
 
-            await self._store_refreshed_device(
-                local_devices,
-                "_climate_devices",
-                self._send_climate_update_callback,
-                device,
-                send_callback,
-            )
+            local_devices[device.unique_id] = device
 
             for sensor in sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_climate_sensor_devices",
-                    self._send_sensor_update_callback,
-                    sensor,
-                    send_callback,
-                )
+                sensor_devices[sensor.unique_id] = sensor
 
             for binary_sensor in binary_sensors:
-                await self._store_refreshed_device(
-                    binary_devices,
-                    "_climate_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    binary_sensor,
-                    send_callback,
-                )
+                binary_devices[binary_sensor.unique_id] = binary_sensor
 
         self._climate_devices = local_devices
         self._climate_sensor_devices = sensor_devices
@@ -949,16 +843,14 @@ class IT600Gateway:
     async def _refresh_wiring_centre_devices(
         self,
         devices: list[Any],
-        send_callback: bool = False,
     ) -> None:
         binary_devices: dict[str, BinarySensorDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
 
         # Signal-quality readings are absent from most polls even for healthy
         # devices, so the previous collection is handed to the parser to carry
-        # the last known value forward. Snapshotting it keeps the lookup stable
-        # while the `send_callback` path writes this poll's devices into it.
-        previous_sensors = dict(self._wiring_centre_sensor_devices)
+        # the last known value forward.
+        previous_sensors = self._wiring_centre_sensor_devices
 
         for device_status in await self._device_detail_statuses(
             devices,
@@ -982,63 +874,17 @@ class IT600Gateway:
                 continue
 
             if connectivity is not None:
-                await self._store_refreshed_device(
-                    binary_devices,
-                    "_wiring_centre_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    connectivity,
-                    send_callback,
-                )
+                binary_devices[connectivity.unique_id] = connectivity
 
             for problem_sensor in problem_sensors:
-                await self._store_refreshed_device(
-                    binary_devices,
-                    "_wiring_centre_binary_sensor_devices",
-                    self._send_binary_sensor_update_callback,
-                    problem_sensor,
-                    send_callback,
-                )
+                binary_devices[problem_sensor.unique_id] = problem_sensor
 
             for signal_sensor in signal_sensors:
-                await self._store_refreshed_device(
-                    sensor_devices,
-                    "_wiring_centre_sensor_devices",
-                    self._send_sensor_update_callback,
-                    signal_sensor,
-                    send_callback,
-                )
+                sensor_devices[signal_sensor.unique_id] = signal_sensor
 
         self._wiring_centre_binary_sensor_devices = binary_devices
         self._wiring_centre_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s wiring centre devices", len(binary_devices))
-
-    async def _send_climate_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._climate_update_callbacks, device_id)
-
-    async def _send_binary_sensor_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(
-            self._binary_sensor_update_callbacks,
-            device_id,
-        )
-
-    async def _send_switch_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._switch_update_callbacks, device_id)
-
-    async def _send_cover_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._cover_update_callbacks, device_id)
-
-    async def _send_sensor_update_callback(self, device_id: str) -> None:
-        """Internal method to notify all update callback subscribers."""
-
-        await _notify_update_callbacks(self._sensor_update_callbacks, device_id)
 
     @staticmethod
     def _validate_device_id(device_id: str) -> str:
@@ -1053,7 +899,7 @@ class IT600Gateway:
         device_id = self._validate_device_id(device_id)
         device = devices.get(device_id)
         if device is None:
-            raise KeyError(
+            raise IT600DeviceNotFoundError(
                 DEVICE_NOT_FOUND_ERROR.format(
                     device_type=device_type,
                     device_id=device_id,
@@ -1154,8 +1000,9 @@ class IT600Gateway:
                 cached SQ610 climate devices are fetched.
 
         Raises:
-            KeyError: If a requested device is not in the climate cache.
-            ValueError: If a requested device is not an SQ610 model.
+            IT600DeviceNotFoundError: If a requested device is not in the
+                climate cache.
+            IT600ValidationError: If a requested device is not an SQ610 model.
             IT600ConnectionError: If the gateway cannot be reached.
             IT600CommandError: If the gateway response is invalid or rejected.
         """
@@ -1177,7 +1024,7 @@ class IT600Gateway:
                     "climate",
                 )
                 if not is_sq610_model(device.model):
-                    raise ValueError(f"climate device {device_id!r} is not an SQ610")
+                    raise IT600ValidationError(f"climate device {device_id!r} is not an SQ610")
                 devices.append(device)
 
         if not devices:
@@ -1334,7 +1181,7 @@ class IT600Gateway:
                     "sIT600TH": payload
                 }
             else:
-                raise ValueError(
+                raise IT600ValidationError(
                     "mode must be one of ['cool', 'heat', 'off'] for SQ610 devices"
                 )
         elif is_trv_model(device.model):
@@ -1359,7 +1206,7 @@ class IT600Gateway:
 
         device = self._require_device(device_id, self._climate_devices, "climate")
         if device.fan_modes is None:
-            raise ValueError(f"climate device {device_id!r} does not support fan modes")
+            raise IT600ValidationError(f"climate device {device_id!r} does not support fan modes")
         mode = _validate_supported_value(mode, "mode", device.fan_modes)
 
         request_data = {"sFanS": {"SetFanMode": _FAN_MODES.get(mode, FanMode.OFF)}}
@@ -1424,31 +1271,6 @@ class IT600Gateway:
         """Round a number to the nearest half step."""
 
         return round(number * 2) / 2
-
-    async def add_climate_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after climate device refreshes."""
-
-        self._climate_update_callbacks.append(_validate_callback(method))
-
-    async def add_binary_sensor_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after binary sensor refreshes."""
-
-        self._binary_sensor_update_callbacks.append(_validate_callback(method))
-
-    async def add_switch_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after switch refreshes."""
-
-        self._switch_update_callbacks.append(_validate_callback(method))
-
-    async def add_cover_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after cover refreshes."""
-
-        self._cover_update_callbacks.append(_validate_callback(method))
-
-    async def add_sensor_update_callback(self, method: UpdateCallback) -> None:
-        """Register an async callback called after sensor refreshes."""
-
-        self._sensor_update_callbacks.append(_validate_callback(method))
 
     async def _make_encrypted_request(
         self,

@@ -1276,7 +1276,7 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(device.current_temperature)
         self.assertEqual(21.0, device.target_temperature)
 
-    async def test_refresh_invokes_registered_callbacks(self):
+    async def test_refresh_stores_switch_endpoint(self):
         gateway = make_gateway_with_response(
             {
                 "status": "success",
@@ -1292,18 +1292,10 @@ class TestDeviceParsing(unittest.IsolatedAsyncioTestCase):
                 ],
             }
         )
-        callback_device_ids = []
-
-        async def callback(device_id: str) -> None:
-            callback_device_ids.append(device_id)
-
-        await gateway.add_switch_update_callback(callback)
         await gateway._refresh_switch_devices(
             [{"data": {"UniID": "switch_1", "Endpoint": 2}}],
-            send_callback=True,
         )
 
-        self.assertEqual(["switch_1_2"], callback_device_ids)
         self.assertIn("switch_1_2", gateway.get_switch_devices())
 
     async def test_device_detail_response_validation_propagates(self):

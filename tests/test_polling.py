@@ -128,18 +128,7 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
             switch_detail,
             cover_detail,
         )
-        callback_events = []
-
-        async def callback(device_id: str) -> None:
-            callback_events.append(device_id)
-
-        await gateway.add_climate_update_callback(callback)
-        await gateway.add_binary_sensor_update_callback(callback)
-        await gateway.add_sensor_update_callback(callback)
-        await gateway.add_switch_update_callback(callback)
-        await gateway.add_cover_update_callback(callback)
-
-        await gateway.poll_status(send_callback=True)
+        await gateway.poll_status()
 
         self.assertEqual("AA:BB:CC:DD:EE:FF", gateway.get_gateway_device().unique_id)
         self.assertIn("thermo_1", gateway.get_climate_devices())
@@ -148,17 +137,6 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sensor_1_temp", gateway.get_sensor_devices())
         self.assertIn("switch_1_2", gateway.get_switch_devices())
         self.assertIn("cover_1", gateway.get_cover_devices())
-        self.assertEqual(
-            [
-                "thermo_1",
-                "thermo_1_problem",
-                "leak_1",
-                "sensor_1_temp",
-                "switch_1_2",
-                "cover_1",
-            ],
-            callback_events,
-        )
         self.assertEqual(
             [
                 ("read", "readall"),
@@ -213,25 +191,13 @@ class TestPolling(unittest.IsolatedAsyncioTestCase):
             gateway_detail,
             wiring_centre_detail,
         )
-        callback_events = []
-
-        async def callback(device_id: str) -> None:
-            callback_events.append(device_id)
-
-        await gateway.add_binary_sensor_update_callback(callback)
-        await gateway.add_sensor_update_callback(callback)
-
-        await gateway.poll_status(send_callback=True)
+        await gateway.poll_status()
 
         self.assertIn("wc_1", gateway.get_binary_sensor_devices())
         self.assertIn("wc_1_problem", gateway.get_binary_sensor_devices())
         self.assertIn("wc_1_rssi", gateway.get_sensor_devices())
         self.assertIn("wc_1_lqi", gateway.get_sensor_devices())
         self.assertTrue(gateway.get_binary_sensor_device("wc_1_problem").is_on)
-        self.assertEqual(
-            ["wc_1", "wc_1_problem", "wc_1_rssi", "wc_1_lqi"],
-            callback_events,
-        )
         self.assertEqual(
             [
                 ("read", "readall"),
