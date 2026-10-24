@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Verify 75 actual floor-comfort changes on three SQ610RFNH/00000054 devices,
+  add the anonymized command/read-back vectors as regression tests, extend the
+  guarded counter range through 34 and distinguish an older stale command
+  echo from a newer in-flight command. Rollover remains unsupported.
 - Add an experimental, guarded Comfort Warm Floor setter for SQ610RFNH
   firmware 00000054. Preserve the device's own settings footer, read fresh
   state, reject pending/unverified settings, and never replay this sequenced
