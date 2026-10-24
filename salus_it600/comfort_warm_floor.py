@@ -1,7 +1,7 @@
 """Conservative SQ610 Comfort Warm Floor command encoder.
 
-Only the SQ610RFNH/00000054 profile and save counters captured in hardware
-are enabled. This is not a general advanced-settings or PIN encoder.
+Only the SQ610RFNH/00000054 profile is enabled. The beta uses the upstream
+sequence formula without rollover; counters above 35 remain untested hardware.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from .exceptions import IT600ValidationError
 
 _PROFILE = ("SQ610RFNH", "00000054")
 _HEX_SETTINGS = re.compile(r"72[0-9a-fA-F]{152}\Z")
-_MAX_VERIFIED_COUNTER = 34
+_MAX_COUNTER = 255
 
 
 def _counter_bytes(counter: int) -> bytes:
@@ -23,7 +23,9 @@ def _counter_bytes(counter: int) -> bytes:
     return bytes(((2 * counter - 1) & 0xFF, 255 - (counter >> 2)))
 
 
-def _validated_settings(status: dict[str, Any]) -> bytes:
+def _validated_settings(
+    status: dict[str, Any], *, for_write: bool = True, allow_pending: bool = False,
+) -> bytes:
     """Validate the complete read snapshot before allowing any encoding."""
     for section in ("data", "DeviceL", "sZDO", "sIT600TH", "sIT600I"):
         if not isinstance(status.get(section), dict):
@@ -53,9 +55,10 @@ def _validated_settings(status: dict[str, Any]) -> bytes:
         raise IT600ValidationError("Comfort Warm Floor is only verified in heating mode")
     if base[39] not in range(4) or base[43] != 0:
         raise IT600ValidationError("Unsupported comfort level or PIN-protected settings")
-    # The 75-write hardware trial extends the captured range through 34.
-    # Never extrapolate past the last verified result or attempt rollover.
-    if base[1] >= _MAX_VERIFIED_COUNTER or base[40:42] != _counter_bytes(base[1]):
+    # PR #54 describes this relation over an unsigned byte. Hardware evidence
+    # currently ends at 35. This beta permits the remaining non-wrapping range,
+    # but validates the relation on EVERY fresh read and never resets a counter.
+    if (for_write and base[1] >= _MAX_COUNTER) or base[40:42] != _counter_bytes(base[1]):
         raise IT600ValidationError("Unverified save counter or PIN encoding; use the Salus app")
     recorded = status.get("sIT600I", {}).get("CommandResponse_d")
     if not isinstance(recorded, str) or not re.fullmatch(r"42313173[0-9a-fA-F]{118}00", recorded, re.IGNORECASE):
@@ -63,7 +66,7 @@ def _validated_settings(status: dict[str, Any]) -> bytes:
     response_bytes = bytes.fromhex(recorded)
     # The trial's third device initially reported an older successful local
     # command than its current settings. An older echo is stale, not pending.
-    if response_bytes[4] > base[1] or (
+    if (response_bytes[4] > base[1] and not allow_pending) or (
         response_bytes[4] == base[1] and response_bytes[4:63] != base[1:60]
     ):
         raise IT600ValidationError("Settings command is pending or its recorded layout is unverified")

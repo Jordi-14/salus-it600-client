@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from salus_it600.comfort_warm_floor import build_comfort_warm_floor_command
+from salus_it600.comfort_warm_floor import (
+    _counter_bytes,
+    build_comfort_warm_floor_command,
+)
 from salus_it600.exceptions import IT600ValidationError
 
 EVIDENCE = json.loads(
@@ -41,8 +44,15 @@ def test_exact_hardware_command_and_readback(vector):
     assert all(before[i] == predicted_after[i] for i in range(77) if i not in (1, 39, 40, 41))
 
 
-def test_no_extrapolation_past_last_hardware_verified_counter():
+def test_beta_uses_upstream_formula_beyond_hardware_range_but_never_wraps():
     last = max(EVIDENCE["vectors"], key=lambda v: bytes.fromhex(v["after"])[1])
     assert bytes.fromhex(last["after"])[1] == 34
+    assert bytes.fromhex(build_comfort_warm_floor_command(snapshot(last, after=True), 1))[4] == 35
+    status = snapshot(last, after=True)
+    data = bytearray.fromhex(status["sIT600TH"]["Schedule"])
+    data[1] = 255
+    data[40:42] = _counter_bytes(255)
+    status["sIT600TH"]["Schedule"] = status["sIT600TH"]["Status_2_d"] = data.hex()
+    status["sIT600I"]["CommandResponse_d"] = "42313173" + data[1:60].hex() + "00"
     with pytest.raises(IT600ValidationError, match="counter"):
-        build_comfort_warm_floor_command(snapshot(last, after=True), 1)
+        build_comfort_warm_floor_command(status, 1)

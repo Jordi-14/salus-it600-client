@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.7.0b2.dev20261024 - fork beta
+
+- Use PR54's counter equations for non-wrapping counters through 255, validating
+  each fresh snapshot. Only counters through 35 have hardware evidence. Never
+  wrap/reset a counter or accept alternate PIN encodings.
+- Add awaited pre-write backup and exact read-back confirmation options. Recover
+  a lost acknowledgement by reading without replay. Stop on unrelated edits;
+  preserve the backup instead of blindly restoring old settings.
+
+## Earlier feature work
 
 - Verify 75 actual floor-comfort changes on three SQ610RFNH/00000054 devices,
   add the anonymized command/read-back vectors as regression tests, extend the

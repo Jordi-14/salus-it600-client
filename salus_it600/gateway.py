@@ -3,13 +3,13 @@
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Self, TypeVar
 
 import aiohttp
 from aiohttp import client_exceptions
 
-from .comfort_warm_floor import build_comfort_warm_floor_command
+from .comfort_warm_floor import _validated_settings, build_comfort_warm_floor_command
 from .const import (
     COVER_POSITION_MAX,
     COVER_POSITION_MIN,
@@ -1232,7 +1232,9 @@ class IT600Gateway:
         return raw_properties
 
     async def set_climate_device_comfort_warm_floor(
-        self, device_id: str, level: int,
+        self, device_id: str, level: int, *,
+        before_write: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        confirmation_timeout: float | None = None,
     ) -> None:
         """Request a verified-profile SQ610 floor-comfort level (0..3).
 
@@ -1242,6 +1244,12 @@ class IT600Gateway:
         in-flight settings commands are rejected before any write.
         """
         level = _validate_int_range(level, "comfort warm floor level", 0, 3)
+        if confirmation_timeout is not None and (
+            isinstance(confirmation_timeout, bool)
+            or not isinstance(confirmation_timeout, (float, int))
+            or not 0 < confirmation_timeout <= 300
+        ):
+            raise IT600ValidationError("Confirmation timeout must be between 0 and 300 seconds")
         device = self._require_device(device_id, self._climate_devices, "climate")
         if not device.available:
             raise IT600ValidationError("Cannot change floor comfort on an offline device")
@@ -1261,21 +1269,80 @@ class IT600Gateway:
             command = build_comfort_warm_floor_command(status, level)
             if command is None:
                 return
-            result = await self._make_encrypted_request(
-                "write",
-                {"requestAttr": "write", "id": [
-                    {"data": device.data, "sIT600I": {"SetCommand_d": command}},
-                ]},
-                retry_disconnect=False,
-            )
-            items = _response_items(result, "floor-comfort write")
-            if (
-                len(items) != 1
-                or items[0].get("status") != "success"
-                or items[0].get("data", {}).get("UniID") != device.unique_id
-                or items[0].get("data", {}).get("Endpoint") != device.data.get("Endpoint")
-            ):
-                raise IT600CommandError("Gateway did not acknowledge the floor-comfort write")
+            if before_write is not None:
+                # Await durable storage BEFORE dispatch. A failed backup must
+                # prevent the write, not merely produce a warning afterwards.
+                await before_write(status)
+            try:
+                result = await self._make_encrypted_request(
+                    "write",
+                    {"requestAttr": "write", "id": [
+                        {"data": device.data, "sIT600I": {"SetCommand_d": command}},
+                    ]},
+                    retry_disconnect=False,
+                )
+                items = _response_items(result, "floor-comfort write")
+                if (
+                    len(items) != 1
+                    or items[0].get("status") != "success"
+                    or items[0].get("data", {}).get("UniID") != device.unique_id
+                    or items[0].get("data", {}).get("Endpoint") != device.data.get("Endpoint")
+                ):
+                    raise IT600CommandError("Gateway did not acknowledge the floor-comfort write")
+            except (IT600ConnectionError, IT600CommandError):
+                if confirmation_timeout is None:
+                    raise
+                # The write may have reached the device despite a lost reply.
+                # Confirm by reading; never send the command again.
+            if confirmation_timeout is not None:
+                await self._confirm_comfort_warm_floor(status, command, confirmation_timeout)
+
+    async def _confirm_comfort_warm_floor(
+        self, before: dict[str, Any], command: str, timeout: float,
+    ) -> None:
+        """Confirm exact settings and command echo under the existing lock."""
+        base = bytes.fromhex(before["sIT600TH"]["Schedule"])
+        expected = b"\x72" + bytes.fromhex(command)[4:] + base[60:]
+        deadline = asyncio.get_running_loop().time() + timeout
+        protected = (
+            "HoldType", "SystemMode", "HeatingSetpoint_x100", "CoolingSetpoint_x100",
+            "LockKey", "LockKey_a", "HeatingControl", "CoolingControl",
+            "PairedWCNumber", "PairedTRVShortID", "ProgramOperationMode", "ScheduleType",
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                while asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(3)
+                    try:
+                        response = await self._make_encrypted_request(
+                            "read", {"requestAttr": "deviceid", "id": [{"data": before["data"]}]},
+                        )
+                    except IT600ConnectionError:
+                        continue
+                    items = _response_items(response, "floor-comfort confirmation")
+                    if len(items) != 1 or items[0].get("data") != before["data"] or items[0].get("status") != "success":
+                        raise IT600CommandError("Unexpected floor-comfort confirmation device")
+                    after = items[0]
+                    if after.get("sZDOInfo", {}).get("OnlineStatus_i") != 1:
+                        continue
+                    try:
+                        current = _validated_settings(after, for_write=False, allow_pending=True)
+                    except IT600ValidationError as error:
+                        raise IT600CommandError("Unrecognized confirmation settings; backup retained") from error
+                    changed = any(
+                        current[i] != base[i] for i in range(77) if i not in (1, 39, 40, 41)
+                    ) or before.get("sScheS") != after.get("sScheS") or any(
+                        before["sIT600TH"].get(key) != after["sIT600TH"].get(key) for key in protected
+                    )
+                    if changed:
+                        raise IT600CommandError("Other settings changed; refusing automatic overwrite or rollback")
+                    if current == expected and after["sIT600I"]["CommandResponse_d"].lower() == command.lower() + "00":
+                        return
+                    if current != base:
+                        raise IT600CommandError("Unexpected settings result; backup retained for review")
+        except TimeoutError:
+            pass
+        raise IT600CommandError("Floor comfort was not confirmed; read current state before any recovery")
 
     async def _write_sq610_property(
         self,
