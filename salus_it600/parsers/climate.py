@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ..comfort_warm_floor import supports_comfort_warm_floor_write
 from ..const import (
     BATTERY_ERROR_CODES,
     BATTERY_LEVEL_MAP,
@@ -431,6 +432,7 @@ def _parse_sq610_climate_device(
         cooling_capability_source=cooling_capability_source,
         diagnostic_fields=climate_diagnostic_fields(diagnostic_payload),
         advanced_settings=parse_advanced_settings(th),
+        supports_comfort_warm_floor=supports_comfort_warm_floor_write(device_status),
     )
 
 

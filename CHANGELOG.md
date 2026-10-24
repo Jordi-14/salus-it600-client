@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add an experimental, guarded Comfort Warm Floor setter for SQ610RFNH
+  firmware 00000054. Preserve the device's own settings footer, read fresh
+  state, reject pending/unverified settings, and never replay this sequenced
+  write on disconnect. Other settings remain read-only. See
+  `docs/comfort-warm-floor-write.md` for the deliberately limited counter range.
+
 ## 0.7.0b1 - 2026-10-22
 
 Breaking changes (release as 0.7.0):

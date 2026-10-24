@@ -9,6 +9,7 @@ from typing import Any, Self, TypeVar
 import aiohttp
 from aiohttp import client_exceptions
 
+from .comfort_warm_floor import build_comfort_warm_floor_command
 from .const import (
     COVER_POSITION_MAX,
     COVER_POSITION_MIN,
@@ -90,7 +91,8 @@ _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 _SQ610_WRITE_LOCK_KEY = "SetLockKey"
 # The gateway drops idle keep-alive connections without telling the client, so
 # the next request on a reused connection fails with ServerDisconnectedError.
-# One retry opens a fresh connection; reads and writes are both safe to resend.
+# One retry opens a fresh connection for ordinary requests. Sequenced settings
+# commands explicitly disable replay because their outcome can be uncertain.
 _DISCONNECT_RETRY_ATTEMPTS = 2
 _DISCONNECT_RETRY_DELAY = 0.2
 # Consecutive connection failures on the combined detail request before the
@@ -444,6 +446,7 @@ class IT600Gateway:
         self._disconnect_retry_delay = _DISCONNECT_RETRY_DELAY
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
+        self._comfort_floor_lock = asyncio.Lock()
 
         self._session = session
         self._close_session = False
@@ -1228,6 +1231,52 @@ class IT600Gateway:
 
         return raw_properties
 
+    async def set_climate_device_comfort_warm_floor(
+        self, device_id: str, level: int,
+    ) -> None:
+        """Request a verified-profile SQ610 floor-comfort level (0..3).
+
+        Read fresh settings, preserve the thermostat's own footer, and send at
+        most once. Acceptance is not confirmation: poll status until the device
+        reports the new level. Unknown profiles, PIN encodings, counters and
+        in-flight settings commands are rejected before any write.
+        """
+        level = _validate_int_range(level, "comfort warm floor level", 0, 3)
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        if not device.available:
+            raise IT600ValidationError("Cannot change floor comfort on an offline device")
+        async with self._comfort_floor_lock:
+            response = await self._make_encrypted_request(
+                "read", {"requestAttr": "deviceid", "id": [{"data": device.data}]},
+            )
+            matches = [
+                item for item in _response_items(response, "floor-comfort device detail")
+                if item.get("data") == device.data and item.get("status") == "success"
+            ]
+            if len(matches) != 1:
+                raise IT600CommandError("Expected one successful floor-comfort device response")
+            status = matches[0]
+            if status.get("sZDOInfo", {}).get("OnlineStatus_i") != 1:
+                raise IT600ValidationError("Cannot change floor comfort on an offline device")
+            command = build_comfort_warm_floor_command(status, level)
+            if command is None:
+                return
+            result = await self._make_encrypted_request(
+                "write",
+                {"requestAttr": "write", "id": [
+                    {"data": device.data, "sIT600I": {"SetCommand_d": command}},
+                ]},
+                retry_disconnect=False,
+            )
+            items = _response_items(result, "floor-comfort write")
+            if (
+                len(items) != 1
+                or items[0].get("status") != "success"
+                or items[0].get("data", {}).get("UniID") != device.unique_id
+                or items[0].get("data", {}).get("Endpoint") != device.data.get("Endpoint")
+            ):
+                raise IT600CommandError("Gateway did not acknowledge the floor-comfort write")
+
     async def _write_sq610_property(
         self,
         device: ClimateDevice,
@@ -1458,6 +1507,8 @@ class IT600Gateway:
         self,
         command: str,
         request_body: dict[str, Any],
+        *,
+        retry_disconnect: bool = True,
     ) -> dict[str, Any]:
         """Makes encrypted Salus iT600 json request, decrypts and returns response."""
 
@@ -1468,7 +1519,7 @@ class IT600Gateway:
 
             request_url = f"http://{self._host}:{self._port}/deviceid/{command}"
             request_body_json = json.dumps(request_body)
-            retry_attempts = _DISCONNECT_RETRY_ATTEMPTS
+            retry_attempts = _DISCONNECT_RETRY_ATTEMPTS if retry_disconnect else 1
 
             if self._debug:
                 _LOGGER.debug(

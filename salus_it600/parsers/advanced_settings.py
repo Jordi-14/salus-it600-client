@@ -35,10 +35,10 @@ Deliberately not decoded:
 - Bytes 44 and 48-76 are outside the confirmed settings table (a gap byte,
   then the schedule/holiday-hold payload region and `ff` padding).
 
-This module is read-only by design. No write/encode path is implemented:
-the save-counter and PIN-obfuscation interactions with writes are not fully
-understood, and a subtly wrong write could corrupt a live thermostat's
-settings.
+This decoder remains read-only. A separate, restricted Comfort Warm Floor
+encoder exists in `comfort_warm_floor.py` for one hardware-verified profile.
+It is not a general settings encoder: save counters, PIN variants and other
+firmware layouts remain unverified outside the documented captures.
 """
 
 from __future__ import annotations
