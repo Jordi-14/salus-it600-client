@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0b2.dev20261024+floor2 - fork beta fix
+
+- Keep the reported floor-comfort value available while a vendor-app command
+  is pending. Separate supported-profile discovery from current write readiness.
+  Fresh command-echo validation still blocks unsafe overlapping writes.
+
 ## 0.7.0b2.dev20261024 - fork beta
 
 - Use PR54's counter equations for non-wrapping counters through 255, validating

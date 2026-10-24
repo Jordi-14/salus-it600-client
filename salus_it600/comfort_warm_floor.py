@@ -25,9 +25,11 @@ def _counter_bytes(counter: int) -> bytes:
 
 def _validated_settings(
     status: dict[str, Any], *, for_write: bool = True, allow_pending: bool = False,
+    check_command: bool = True,
 ) -> bytes:
     """Validate the complete read snapshot before allowing any encoding."""
-    for section in ("data", "DeviceL", "sZDO", "sIT600TH", "sIT600I"):
+    sections = ("data", "DeviceL", "sZDO", "sIT600TH")
+    for section in (*sections, "sIT600I") if check_command else sections:
         if not isinstance(status.get(section), dict):
             raise IT600ValidationError("Incomplete SQ610 settings response")
     if status["data"].get("Endpoint") != 9 or status["data"].get("DeviceType") != 100:
@@ -60,6 +62,8 @@ def _validated_settings(
     # but validates the relation on EVERY fresh read and never resets a counter.
     if (for_write and base[1] >= _MAX_COUNTER) or base[40:42] != _counter_bytes(base[1]):
         raise IT600ValidationError("Unverified save counter or PIN encoding; use the Salus app")
+    if not check_command:
+        return base
     recorded = status.get("sIT600I", {}).get("CommandResponse_d")
     if not isinstance(recorded, str) or not re.fullmatch(r"42313173[0-9a-fA-F]{118}00", recorded, re.IGNORECASE):
         raise IT600ValidationError("Settings command is pending or its recorded layout is unverified")
@@ -77,6 +81,20 @@ def supports_comfort_warm_floor_write(status: dict[str, Any]) -> bool:
     """Return whether this snapshot satisfies the verified write profile."""
     try:
         _validated_settings(status)
+    except (IT600ValidationError, AttributeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def supports_comfort_warm_floor_profile(status: dict[str, Any]) -> bool:
+    """Keep a supported readable entity available during an external command.
+
+    Command echoes describe write readiness, not whether the last reported
+    setting can be displayed. The setter still validates the echo freshly.
+    Model, firmware, settings layout, PIN and non-wrapping limit remain guarded.
+    """
+    try:
+        _validated_settings(status, check_command=False)
     except (IT600ValidationError, AttributeError, TypeError, ValueError):
         return False
     return True

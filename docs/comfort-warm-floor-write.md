@@ -110,3 +110,14 @@ The matching Home Assistant beta pins a SHA-256-verified pure-Python wheel
 from this fork's GitHub prerelease. It requires no compiler or Git installation
 on the Home Assistant host. Neither the client nor integration beta is uploaded
 to PyPI or proposed as an upstream production dependency.
+
+## Reported state during app changes
+
+The normalized `supports_comfort_warm_floor` flag describes the supported
+profile. It does not depend on a pending, absent or stale command echo. A known
+reported level stays visible during an app-side write and changes only when a
+new settings snapshot arrives. A new local write still performs all original
+echo, identity, PIN and counter checks against fresh state; this UI fix does
+not permit overlapping writes. Real offline or unsupported devices remain
+unavailable. Post-installation app/local read-backs also reached counter 37;
+rollover and general PIN encoding remain unverified.
