@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0b2.dev20261025+floor3 - review fixes
+
+- Handle the observed B34L shared response with two stable fresh reads. Keep
+  newer/malformed B11 responses blocked; retain uncertain local commands until
+  exact read-back resolves them. Confirm exact settings when the shared echo
+  has been replaced by the observed non-settings marker.
+- Reject non-finite numeric arguments/readings and inverted temperature bounds.
+- Decode a complete Schedule alias when Status_2_d is present but incomplete.
+- Compare settings aliases by hex content without case sensitivity.
+
 ## 0.7.0b2.dev20261024+floor2 - fork beta fix
 
 - Keep the reported floor-comfort value available while a vendor-app command

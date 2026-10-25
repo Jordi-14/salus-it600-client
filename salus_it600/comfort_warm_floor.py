@@ -14,6 +14,9 @@ from .exceptions import IT600ValidationError
 _PROFILE = ("SQ610RFNH", "00000054")
 _HEX_SETTINGS = re.compile(r"72[0-9a-fA-F]{152}\Z")
 _MAX_COUNTER = 255
+# Observed on two online devices after app-side changes. This is a different
+# command family, not a B11 settings acknowledgement. Its meaning is not assumed.
+NON_SETTINGS_RESPONSE = "4233344c"
 
 
 def _counter_bytes(counter: int) -> bytes:
@@ -42,7 +45,8 @@ def _validated_settings(
     schedule = th.get("Schedule")
     if not isinstance(schedule, str) or not _HEX_SETTINGS.fullmatch(schedule):
         raise IT600ValidationError("Unrecognized SQ610 advanced-settings layout")
-    if th.get("Status_2_d") != schedule:
+    alias = th.get("Status_2_d")
+    if not isinstance(alias, str) or not _HEX_SETTINGS.fullmatch(alias) or alias.lower() != schedule.lower():
         raise IT600ValidationError("SQ610 advanced-settings aliases do not agree")
     base = bytes.fromhex(schedule)
     if base[48:] != b"\xff" * 27 + b"\x00\x00":
@@ -65,6 +69,8 @@ def _validated_settings(
     if not check_command:
         return base
     recorded = status.get("sIT600I", {}).get("CommandResponse_d")
+    if isinstance(recorded, str) and recorded.lower() == NON_SETTINGS_RESPONSE:
+        return base
     if not isinstance(recorded, str) or not re.fullmatch(r"42313173[0-9a-fA-F]{118}00", recorded, re.IGNORECASE):
         raise IT600ValidationError("Settings command is pending or its recorded layout is unverified")
     response_bytes = bytes.fromhex(recorded)

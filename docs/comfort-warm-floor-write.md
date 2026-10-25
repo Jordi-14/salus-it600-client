@@ -121,3 +121,19 @@ echo, identity, PIN and counter checks against fresh state; this UI fix does
 not permit overlapping writes. Real offline or unsupported devices remain
 unavailable. Post-installation app/local read-backs also reached counter 37;
 rollover and general PIN encoding remain unverified.
+
+## Shared response review (beta 0.9.11b4 client)
+
+Read-only captures from two online thermostats exposed `4233344c` (`B34L`)
+in the shared CommandResponse_d field after app changes. This is not the B11
+settings acknowledgement. Its undocumented meaning is not inferred. The encoder
+accepts only this exact additional marker, and the gateway requires two identical
+fresh settings snapshots, two seconds apart, before dispatch when it appears.
+Other unknown markers remain blocked. Newer B11 settings echoes still block.
+
+Confirmation accepts the exact entire expected settings blob when either the
+matching successful B11 echo or this observed marker is present. Merely seeing
+the requested level is insufficient. An uncertain command remains remembered
+within the client instance even if another response overwrites its echo. The HA
+beta additionally journals uncertainty to disk across restarts and resolves it
+from exact fresh settings instead of blindly replaying an old command.
