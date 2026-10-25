@@ -7,6 +7,7 @@
   exact read-back resolves them. Confirm exact settings when the shared echo
   has been replaced by the observed non-settings marker.
 - Reject non-finite numeric arguments/readings and inverted temperature bounds.
+  Revalidate the rounded setpoint so half-degree rounding cannot cross a limit.
 - Decode a complete Schedule alias when Status_2_d is present but incomplete.
 - Compare settings aliases by hex content without case sensitivity.
 

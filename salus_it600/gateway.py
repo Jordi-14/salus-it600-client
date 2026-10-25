@@ -1576,7 +1576,10 @@ class IT600Gateway:
             min_temp,
             max_temp,
         )
-        rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
+        rounded_celsius = _validate_setpoint(
+            self.round_to_half(setpoint_celsius), min_temp, max_temp,
+        )
+        rounded_setpoint = int(rounded_celsius * TEMPERATURE_SCALE)
         request_data: dict[str, dict[str, int]]
         is_cooling = _uses_cooling_setpoint(device)
 

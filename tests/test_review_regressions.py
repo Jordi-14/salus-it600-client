@@ -149,3 +149,25 @@ async def test_applied_unknown_command_is_resolved_with_fresh_state_and_new_coun
     assert write.args[0] == "write"
     assert write.args[1]["id"][0]["sIT600I"]["SetCommand_d"] == next_command
     assert bytes.fromhex(next_command)[4] == bytes.fromhex(first)[4] + 1
+
+
+@pytest.mark.parametrize("minimum,maximum,target", [(5.1, 35, 5.1), (5, 34.9, 34.9)])
+async def test_rounding_never_pushes_a_setpoint_beyond_device_limits(
+    minimum, maximum, target
+):
+    from dataclasses import replace
+
+    gateway, _ = setup_gateway()
+    device = gateway._climate_devices["device-1"]
+    gateway._climate_devices["device-1"] = replace(
+        device,
+        min_temp=minimum,
+        max_temp=maximum,
+        min_heat_temp=minimum,
+        max_heat_temp=maximum,
+        system_mode=4,
+    )
+    gateway._make_encrypted_request = AsyncMock()
+    with pytest.raises(IT600ValidationError):
+        await gateway.set_climate_device_temperature("device-1", target)
+    gateway._make_encrypted_request.assert_not_called()
