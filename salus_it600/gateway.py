@@ -1,6 +1,7 @@
 """Salus iT600 gateway API."""
 
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -12,6 +13,8 @@ from aiohttp import client_exceptions
 
 from .comfort_warm_floor import (
     NON_SETTINGS_RESPONSE,
+    _command_applied,
+    _same_protected_settings,
     _validated_settings,
     build_comfort_warm_floor_command,
 )
@@ -454,7 +457,7 @@ class IT600Gateway:
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
         self._comfort_floor_lock = asyncio.Lock()
-        self._pending_floor_commands: dict[str, bytes] = {}
+        self._pending_floor_commands: dict[str, tuple[dict[str, Any], str]] = {}
 
         self._session = session
         self._close_session = False
@@ -1248,7 +1251,7 @@ class IT600Gateway:
 
         Read fresh settings, preserve the thermostat's own footer, and send at
         most once. Acceptance is not confirmation: poll status until the device
-        reports the new level. Unknown profiles, PIN encodings, counters and
+        reports the new level. Unknown profiles, PIN-required settings and
         in-flight settings commands are rejected before any write.
         """
         level = _validate_int_range(level, "comfort warm floor level", 0, 3)
@@ -1277,8 +1280,7 @@ class IT600Gateway:
             _validated_settings(status)
             pending = self._pending_floor_commands.get(device_id)
             if pending is not None:
-                current = _validated_settings(status, for_write=False, check_command=False)
-                if current != pending:
+                if not _command_applied(pending[0], status, pending[1]):
                     raise IT600ValidationError("Previous floor-comfort command is still pending or uncertain")
                 del self._pending_floor_commands[device_id]
             if status.get("sIT600I", {}).get("CommandResponse_d", "").lower() == NON_SETTINGS_RESPONSE:
@@ -1305,8 +1307,7 @@ class IT600Gateway:
                 # Await durable storage BEFORE dispatch. A failed backup must
                 # prevent the write, not merely produce a warning afterwards.
                 await before_write(status)
-            base = bytes.fromhex(status["sIT600TH"]["Schedule"])
-            self._pending_floor_commands[device_id] = b"\x72" + bytes.fromhex(command)[4:] + base[60:]
+            self._pending_floor_commands[device_id] = (copy.deepcopy(status), command)
             try:
                 result = await self._make_encrypted_request(
                     "write",
@@ -1335,15 +1336,10 @@ class IT600Gateway:
     async def _confirm_comfort_warm_floor(
         self, before: dict[str, Any], command: str, timeout: float,
     ) -> None:
-        """Confirm exact settings and command echo under the existing lock."""
+        """Confirm level, protected settings and echo; metadata belongs to device."""
         base = bytes.fromhex(before["sIT600TH"]["Schedule"])
-        expected = b"\x72" + bytes.fromhex(command)[4:] + base[60:]
+        target_level = bytes.fromhex(command)[42]
         deadline = asyncio.get_running_loop().time() + timeout
-        protected = (
-            "HoldType", "SystemMode", "HeatingSetpoint_x100", "CoolingSetpoint_x100",
-            "LockKey", "LockKey_a", "HeatingControl", "CoolingControl",
-            "PairedWCNumber", "PairedTRVShortID", "ProgramOperationMode", "ScheduleType",
-        )
         try:
             async with asyncio.timeout(timeout):
                 while asyncio.get_running_loop().time() < deadline:
@@ -1361,20 +1357,14 @@ class IT600Gateway:
                     if after.get("sZDOInfo", {}).get("OnlineStatus_i") != 1:
                         continue
                     try:
-                        current = _validated_settings(after, for_write=False, allow_pending=True)
+                        current = _validated_settings(after, check_command=False)
                     except IT600ValidationError as error:
                         raise IT600CommandError("Unrecognized confirmation settings; backup retained") from error
-                    changed = any(
-                        current[i] != base[i] for i in range(77) if i not in (1, 39, 40, 41)
-                    ) or before.get("sScheS") != after.get("sScheS") or any(
-                        before["sIT600TH"].get(key) != after["sIT600TH"].get(key) for key in protected
-                    )
-                    if changed:
+                    if not _same_protected_settings(before, after):
                         raise IT600CommandError("Other settings changed; refusing automatic overwrite or rollback")
-                    echo = after["sIT600I"]["CommandResponse_d"].lower()
-                    if current == expected and echo in (command.lower() + "00", NON_SETTINGS_RESPONSE):
+                    if _command_applied(before, after, command):
                         return
-                    if current != base:
+                    if current[39] not in (base[39], target_level):
                         raise IT600CommandError("Unexpected settings result; backup retained for review")
         except TimeoutError:
             pass

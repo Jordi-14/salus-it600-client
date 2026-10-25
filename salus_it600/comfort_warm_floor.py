@@ -1,7 +1,7 @@
 """Conservative SQ610 Comfort Warm Floor command encoder.
 
-Only the SQ610RFNH/00000054 profile is enabled. The beta uses the upstream
-sequence formula without rollover; counters above 35 remain untested hardware.
+Only the SQ610RFNH/00000054 profile is enabled. Hardware captures confirm that
+counter metadata is copied unchanged and the device updates its own read-back.
 """
 
 from __future__ import annotations
@@ -13,22 +13,21 @@ from .exceptions import IT600ValidationError
 
 _PROFILE = ("SQ610RFNH", "00000054")
 _HEX_SETTINGS = re.compile(r"72[0-9a-fA-F]{152}\Z")
-_MAX_COUNTER = 255
 # Observed on two online devices after app-side changes. This is a different
 # command family, not a B11 settings acknowledgement. Its meaning is not assumed.
 NON_SETTINGS_RESPONSE = "4233344c"
 
 
-def _counter_bytes(counter: int) -> bytes:
-    """Return the counter-dependent pair observed with this profile."""
-    if counter == 0:
-        return b"\xff\xff"
-    return bytes(((2 * counter - 1) & 0xFF, 255 - (counter >> 2)))
+_DEVICE_METADATA = frozenset((1, 40, 41))
+_PROTECTED = (
+    "HoldType", "SystemMode", "HeatingSetpoint_x100", "CoolingSetpoint_x100",
+    "LockKey", "LockKey_a", "HeatingControl", "CoolingControl",
+    "PairedWCNumber", "PairedTRVShortID", "ProgramOperationMode", "ScheduleType",
+)
 
 
 def _validated_settings(
-    status: dict[str, Any], *, for_write: bool = True, allow_pending: bool = False,
-    check_command: bool = True,
+    status: dict[str, Any], *, check_command: bool = True,
 ) -> bytes:
     """Validate the complete read snapshot before allowing any encoding."""
     sections = ("data", "DeviceL", "sZDO", "sIT600TH")
@@ -61,11 +60,8 @@ def _validated_settings(
         raise IT600ValidationError("Comfort Warm Floor is only verified in heating mode")
     if base[39] not in range(4) or base[43] != 0:
         raise IT600ValidationError("Unsupported comfort level or PIN-protected settings")
-    # PR #54 describes this relation over an unsigned byte. Hardware evidence
-    # currently ends at 35. This beta permits the remaining non-wrapping range,
-    # but validates the relation on EVERY fresh read and never resets a counter.
-    if (for_write and base[1] >= _MAX_COUNTER) or base[40:42] != _counter_bytes(base[1]):
-        raise IT600ValidationError("Unverified save counter or PIN encoding; use the Salus app")
+    # Bytes 1,40,41 belong to the device. Never calculate, increment or reset
+    # them, including at 255. Keep the separate PIN-required flag guarded above.
     if not check_command:
         return base
     recorded = status.get("sIT600I", {}).get("CommandResponse_d")
@@ -74,11 +70,11 @@ def _validated_settings(
     if not isinstance(recorded, str) or not re.fullmatch(r"42313173[0-9a-fA-F]{118}00", recorded, re.IGNORECASE):
         raise IT600ValidationError("Settings command is pending or its recorded layout is unverified")
     response_bytes = bytes.fromhex(recorded)
-    # The trial's third device initially reported an older successful local
-    # command than its current settings. An older echo is stale, not pending.
-    if (response_bytes[4] > base[1] and not allow_pending) or (
-        response_bytes[4] == base[1] and response_bytes[4:63] != base[1:60]
-    ):
+    # A same-counter echo with a different requested setting is in flight.
+    # Different counter values cannot be ordered: the hardware increments its
+    # read counter independently, and it may wrap. Pending local writes are
+    # additionally tracked and checked against complete settings in the gateway.
+    if response_bytes[4] == base[1] and response_bytes[4:63] != base[1:60]:
         raise IT600ValidationError("Settings command is pending or its recorded layout is unverified")
     return base
 
@@ -97,7 +93,7 @@ def supports_comfort_warm_floor_profile(status: dict[str, Any]) -> bool:
 
     Command echoes describe write readiness, not whether the last reported
     setting can be displayed. The setter still validates the echo freshly.
-    Model, firmware, settings layout, PIN and non-wrapping limit remain guarded.
+    Model, firmware, settings layout and the PIN-required flag remain guarded.
     """
     try:
         _validated_settings(status, check_command=False)
@@ -121,7 +117,27 @@ def build_comfort_warm_floor_command(status: dict[str, Any], level: int) -> str 
         return None
     body = bytearray(base[:60])
     body[0] = 0x73
-    body[1] += 1
     body[39] = level
-    body[40:42] = _counter_bytes(body[1])
     return "423131" + body.hex()
+
+
+def _same_protected_settings(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Compare everything except comfort and device-maintained metadata."""
+    base = _validated_settings(before, check_command=False)
+    current = _validated_settings(after, check_command=False)
+    return (
+        all(base[i] == current[i] for i in range(77) if i not in _DEVICE_METADATA and i != 39)
+        and before.get("sScheS") == after.get("sScheS")
+        and all(before["sIT600TH"].get(key) == after["sIT600TH"].get(key) for key in _PROTECTED)
+    )
+
+
+def _command_applied(before: dict[str, Any], after: dict[str, Any], command: str) -> bool:
+    """Confirm the requested level and protected data, not predicted counters."""
+    current = _validated_settings(after, check_command=False)
+    echo = str(after.get("sIT600I", {}).get("CommandResponse_d", "")).lower()
+    return (
+        current[39] == bytes.fromhex(command)[42]
+        and _same_protected_settings(before, after)
+        and echo in (command.lower() + "00", NON_SETTINGS_RESPONSE)
+    )

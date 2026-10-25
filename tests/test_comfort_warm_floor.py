@@ -19,10 +19,9 @@ from salus_it600.exceptions import (
 from salus_it600.parsers.climate import parse_climate_device
 from tests.test_gateway_request import FakeSession, make_climate_device, make_gateway
 
-# Observed app Off(counter 7) -> computer level 3(counter 8), confirmed in
-# gateway configuration and vendor app on SQ610RFNH firmware 00000054.
+# Historical counter-7 snapshot; the new encoder preserves its metadata.
 OFF = "720701000001050040000000000104002700100006003500050040000500010000000101800000000dfe010000000100ffffffffffffffffffffffffffffffffffffffffffffffffffffff0000"
-LEVEL_3_COMMAND = "423131730801000001050040000000000104002700100006003500050040000500010000000101800000030ffd010000000100ffffffffffffffffffffffff"
+LEVEL_3_COMMAND = "423131730701000001050040000000000104002700100006003500050040000500010000000101800000030dfe010000000100ffffffffffffffffffffffff"
 
 
 def status_fixture():
@@ -56,7 +55,7 @@ def test_hardware_vector_preserves_danish_language_and_every_other_byte():
     before = bytes.fromhex(OFF)
     body = bytes.fromhex(LEVEL_3_COMMAND)[3:]
     assert len(body) == 60
-    assert [i for i in range(60) if before[i] != body[i]] == [0, 1, 39, 40, 41]
+    assert [i for i in range(60) if before[i] != body[i]] == [0, 39]
     assert body[42:48].hex() == "010000000100"
     assert status == original
 
@@ -76,7 +75,7 @@ def test_invalid_levels_never_encode(level):
         build_comfort_warm_floor_command(status_fixture(), level)
 
 
-@pytest.mark.parametrize("offset,value", [(1, "09"), (1, "ff"), (39, "04"), (40, "ee"), (43, "01"), (60, "00")])
+@pytest.mark.parametrize("offset,value", [(39, "04"), (43, "01"), (60, "00")])
 def test_unverified_counter_pin_and_level_are_rejected(offset, value):
     status = status_fixture()
     replace_blob(status, offset, value)

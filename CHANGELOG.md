@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0b2.dev20261025+floor4 - device-owned counter metadata
+
+- Copy fresh SQ610 counter bytes unchanged; only change floor-comfort level.
+- Remove software counter increment, guessed pair generation and the 255 cutoff.
+- Confirm actual level, protected settings and command echo independently of
+  device-owned metadata; preserve uncertain-command, backup and no-replay handling.
+- Add two anonymized actual comfort-only command/read-back captures. Real
+  device-counter rollover remains unobserved; boundary tests are simulated.
+
 ## 0.7.0b2.dev20261025+floor3 - review fixes
 
 - Handle the observed B34L shared response with two stable fresh reads. Keep
