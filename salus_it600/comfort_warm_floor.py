@@ -126,7 +126,8 @@ def _same_protected_settings(before: dict[str, Any], after: dict[str, Any]) -> b
     base = _validated_settings(before, check_command=False)
     current = _validated_settings(after, check_command=False)
     return (
-        all(base[i] == current[i] for i in range(77) if i not in _DEVICE_METADATA and i != 39)
+        before.get("data") == after.get("data")
+        and all(base[i] == current[i] for i in range(77) if i not in _DEVICE_METADATA and i != 39)
         and before.get("sScheS") == after.get("sScheS")
         and all(before["sIT600TH"].get(key) == after["sIT600TH"].get(key) for key in _PROTECTED)
     )
@@ -141,3 +142,25 @@ def _command_applied(before: dict[str, Any], after: dict[str, Any], command: str
         and _same_protected_settings(before, after)
         and echo in (command.lower() + "00", NON_SETTINGS_RESPONSE)
     )
+
+
+def confirmed_comfort_warm_floor_change(before: dict[str, Any], after: dict[str, Any], level: int) -> bool:
+    """Resolve a durable journal, including commands sent by older encoders.
+
+    No command is reconstructed or replayed. Require the actual requested
+    change, all protected settings and a successful matching settings echo.
+    Only device-maintained metadata may differ in the old command echo.
+    """
+    if type(level) is not int or level not in range(4):
+        return False
+    base = _validated_settings(before, check_command=False)
+    current = _validated_settings(after, check_command=False)
+    if base[39] == level or current[39] != level or not _same_protected_settings(before, after):
+        return False
+    echo = after.get("sIT600I", {}).get("CommandResponse_d")
+    if isinstance(echo, str) and echo.lower() == NON_SETTINGS_RESPONSE:
+        return True
+    if not isinstance(echo, str) or not re.fullmatch(r"42313173[0-9a-fA-F]{118}00", echo, re.IGNORECASE):
+        return False
+    body = bytes.fromhex(echo)[3:63]
+    return all(body[i] == current[i] for i in range(1, 60) if i not in _DEVICE_METADATA)
