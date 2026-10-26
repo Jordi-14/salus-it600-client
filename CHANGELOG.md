@@ -1,51 +1,21 @@
 # Changelog
 
-## 0.7.0b2.dev20261025+floor4 - device-owned counter metadata
+## Unreleased
 
-- Copy fresh SQ610 counter bytes unchanged; only change floor-comfort level.
-- Remove software counter increment, guessed pair generation and the 255 cutoff.
-- Confirm actual level, protected settings and command echo independently of
-  device-owned metadata; preserve uncertain-command, backup and no-replay handling.
-- Add two anonymized actual comfort-only command/read-back captures. Real
-  device-counter rollover remains unobserved; boundary tests are simulated.
-
-## 0.7.0b2.dev20261025+floor3 - review fixes
-
-- Handle the observed B34L shared response with two stable fresh reads. Keep
-  newer/malformed B11 responses blocked; retain uncertain local commands until
-  exact read-back resolves them. Confirm exact settings when the shared echo
-  has been replaced by the observed non-settings marker.
-- Reject non-finite numeric arguments/readings and inverted temperature bounds.
-  Revalidate the rounded setpoint so half-degree rounding cannot cross a limit.
-- Decode a complete Schedule alias when Status_2_d is present but incomplete.
-- Compare settings aliases by hex content without case sensitivity.
-
-## 0.7.0b2.dev20261024+floor2 - fork beta fix
-
-- Keep the reported floor-comfort value available while a vendor-app command
-  is pending. Separate supported-profile discovery from current write readiness.
-  Fresh command-echo validation still blocks unsafe overlapping writes.
-
-## 0.7.0b2.dev20261024 - fork beta
-
-- Use PR54's counter equations for non-wrapping counters through 255, validating
-  each fresh snapshot. Only counters through 35 have hardware evidence. Never
-  wrap/reset a counter or accept alternate PIN encodings.
-- Add awaited pre-write backup and exact read-back confirmation options. Recover
-  a lost acknowledgement by reading without replay. Stop on unrelated edits;
-  preserve the backup instead of blindly restoring old settings.
-
-## Earlier feature work
-
-- Verify 75 actual floor-comfort changes on three SQ610RFNH/00000054 devices,
-  add the anonymized command/read-back vectors as regression tests, extend the
-  guarded counter range through 34 and distinguish an older stale command
-  echo from a newer in-flight command. Rollover remains unsupported.
-- Add an experimental, guarded Comfort Warm Floor setter for SQ610RFNH
-  firmware 00000054. Preserve the device's own settings footer, read fresh
-  state, reject pending/unverified settings, and never replay this sequenced
-  write on disconnect. Other settings remain read-only. See
-  `docs/comfort-warm-floor-write.md` for the deliberately limited counter range.
+- Add guarded Comfort Warm Floor read/write support for the verified
+  SQ610RFNH firmware 00000054 profile (Off/1/2/3).
+- Copy device-owned metadata unchanged; alter only the comfort setting in
+  the settings body. No guessed counter arithmetic or artificial 255 cutoff.
+- Require fresh state, an awaited pre-write backup when configured, protected
+  settings validation and confirmed read-back; never replay uncertain writes.
+- Handle the observed shared B34L response using two stable fresh reads.
+  Separate profile support from temporary write readiness so pending app
+  commands do not make the reported floor-comfort entity unavailable.
+- Validate finite numeric inputs and rounded setpoint bounds; decode a complete
+  Schedule alias when Status_2_d is incomplete and compare hex case-insensitively.
+- Include anonymized hardware fixtures: 75 older-encoder changes and two
+  comfort-only changes. Actual device-counter rollover remains unobserved.
+  See docs/comfort-warm-floor-write.md for protocol evidence and limits.
 
 ## 0.7.0b1 - 2026-10-22
 
