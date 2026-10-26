@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 - 2026-10-26
+
+- Promote the tested 0.7.0b1 beta to stable with no runtime changes.
+
 ## 0.7.0b1 - 2026-10-22
 
 Breaking changes (release as 0.7.0):
