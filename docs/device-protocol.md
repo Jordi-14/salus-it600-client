@@ -163,6 +163,71 @@ system, and the single point of failure for every zone it serves.
 | `sIT600WC.Error10`..`Error20`, `Error26`..`Error29` | Fault register bank. The parser reports each active register with the vendor app's description (see `THERMOSTAT_ERROR_CODES` in `salus_it600/const.py`, shared with the thermostat-side Error01-32 codes) |
 | `sIT600WC.ErrorCodeWC_d` | Hex-string summary fault code, `"0000"` at baseline. `bool("0000")` is `True` in Python -- check `str(value).strip("0")` instead, the same pattern `parse_climate_binary_sensor_devices` uses for `sComm.DeviceErrorCode` |
 
+## Mini TRV (it600MINITRV)
+
+The it600MINITRV is a slave actuator paired to one thermostat. Its payload has
+no `sIT600TH`/`sTherS` block, so it is classified as a relay binary sensor.
+
+| Field | Meaning |
+| --- | --- |
+| `sIT600I.RelayStatus` | `1` while the TRV is asked to heat |
+| `sIT600I.Mode` | Operating mode: `0` Auto, `1` Manual On (open), `2` Manual Off (closed) (`MiniTrvMode`). The vendor app also labels `3` fail-safe and `4` adaptation, states the TRV enters on its own. Exposed raw as `BinarySensorDevice.mini_trv_mode` |
+| `sIT600I.PairedThermostatShortID` | ZigBee short address of the paired thermostat; matches that thermostat's `sZDO.ShortID_d`. `0` and `65535` mean unpaired |
+| `sIT600I.TRVError01`, `TRVError23`, `TRVError30`, `TRVError31` | Fault flags: hardware issue, message from unpaired TRV, gear issue, adaptation issue (`MINI_TRV_ERROR_CODES`) |
+| `sIT600I.TRVError22` | Low battery |
+| `sIT600I.CommandResponse_d` | Hex-encoded ASCII report. For a paired TRV, the last three 4-digit decimal groups before the first `@` are temperatures x100: paired thermostat temperature, TRV temperature, setpoint. An unpaired TRV uses a different layout (below). Decoded by `decode_mini_trv_report()` |
+
+A decoded `CommandResponse_d` looks like this (spaces added, identifiers
+replaced):
+
+```text
+A1B2C3D400000001002003284068 1820 2025 1850 @320236FF...
+```
+
+That is thermostat 18.20 °C, TRV 20.25 °C and setpoint 18.50 °C. The values
+were checked against the vendor app, which rounds to 0.5 °C. The group before
+`4068` changes with `RelayStatus` and is not decoded.
+
+An unpaired TRV reports `FFFF` (the unpaired short address) at characters 3-6
+of the decoded string, and the string has no `@`. Its own temperature is the
+4-digit group at character 28, written twice in a row. There is no thermostat
+temperature or setpoint:
+
+```text
+B37FFFF0000000000000000 2407 4 2418 2418 150 0022...
+```
+
+That is TRV 24.18 °C, which matched the vendor app across a falling series of
+samples. The repeat must be read at character 28 rather than searched for: at
+24.94 °C the string holds `...4 2494 2494 1...`, which also contains the repeat
+`4249 4249` one character earlier. The rest of the unpaired string is not
+decoded.
+
+In both layouts, a TRV temperature outside 0-60 °C (exclusive of 0) is treated
+as a decoding error, and no reading is reported.
+
+### Setting the mode
+
+The it600MINITRV has no named write fields such as `SetHoldType`. Commands are
+raw strings written to `sIT600I.SetCommand_d` as space-separated hex bytes of
+ASCII text. `set_mini_trv_mode()` sends the same commands as the vendor app:
+
+| Mode | `SetCommand_d` | ASCII |
+| --- | --- | --- |
+| `MiniTrvMode.AUTO` | `42 33 38 31` | `B381` |
+| `MiniTrvMode.MANUAL_ON` | `42 33 38 37` | `B387` |
+| `MiniTrvMode.MANUAL_OFF` | `42 33 38 38` | `B388` |
+
+The gateway does not update `sIT600I.Mode` from the command alone. After a mode
+change the vendor app asks the TRV for a status report, and the client does the
+same: it waits 2 seconds and then writes
+`42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight zero bytes, `x`). The new
+mode shows on a later poll.
+
+The gateway accepts any `SetCommand_d` string, so a wrong command fails
+silently. Only the three modes above are accepted; fail-safe and adaptation
+cannot be set.
+
 ## Protocol Enums
 
 Use the enums in `salus_it600.const` rather than raw integers:
@@ -173,6 +238,7 @@ Use the enums in `salus_it600.const` rather than raw integers:
 | `SystemMode` | `AUTO=1`, `COOL=3`, `HEAT=4`, `EMERGENCY_HEAT=5` |
 | `RunningState` | `IDLE=0`, `HEATING=1`, `COOLING=2`, `FAN_COIL_HEATING=33`, `FAN_COIL_COOLING=66` |
 | `FanMode` | `OFF=0`, `LOW=1`, `MEDIUM=2`, `HIGH=3`, `AUTO=5` |
+| `MiniTrvMode` | `AUTO=0`, `MANUAL_ON=1`, `MANUAL_OFF=2` |
 | `ControlAlgorithm` | `ITLC_UNDERFLOOR=0`, `ITLC_RADIATORS=1`, `ITLC_ELECTRICAL=2`, `THB_ACTUATOR=5` |
 | `TrvCalibrationMode` | `STANDARD_ON_OFF=3`, `AUTO_SELECTION=4`, `ADVANCED_SELF_LEARNING=5` |
 | `S1S2Function` | `DISABLED=0`, `FLOOR_SENSOR=1`, `EXTERNAL_SENSOR=2`, `OCCUPANCY_SENSOR=3`, `RUN_ONETOUCH=4`, `CHANGEOVER=5` |

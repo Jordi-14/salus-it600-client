@@ -31,14 +31,14 @@ what is deliberately not decoded.
 
 | Sensor | Source |
 |---|---|
-| Temperature | Standalone sensors (TS600, PS600) and thermostat readings |
+| Temperature | Standalone sensors (TS600, PS600), thermostat readings, and it600MINITRV (decoded from `sIT600I.CommandResponse_d`) |
 | Humidity | SQ610 (`SunnySetpoint_x100`) and standalone multi-sensors |
 | Floor temperature | SQ610 with external floor probe (`OUTSensorProbe`) |
 | Battery | Status_d (SQ610RF) and voltage curves (TRV, window/door sensors) |
 | Power (W) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
 | Energy (kWh) | Smart plug (`sMeteringS`) and energy meter ECM600 (`sMeterS`) |
-| Signal strength (dBm) | Thermostats, TRVs, and it600WC (`sIT600I.LastMessageRSSI_d`) |
-| Link quality | Thermostats, TRVs, and it600WC (`sIT600I.LastMessageLQI_d`, 0-255) |
+| Signal strength (dBm) | Thermostats, TRVs, it600MINITRV, it600Receiver, and it600WC (`sIT600I.LastMessageRSSI_d`) |
+| Link quality | Thermostats, TRVs, it600MINITRV, it600Receiver, and it600WC (`sIT600I.LastMessageLQI_d`, 0-255) |
 
 Signal strength and link quality are diagnostic children of the device they
 belong to. The gateway only fills those fields in for devices the coordinator
@@ -53,10 +53,11 @@ and disappear with it.
 | Window / Door | SW600, OS600 (`sIASZS`) |
 | Water leak | WLS600 |
 | Smoke | SmokeSensor-EM |
-| TRV relay (heat) | it600MINITRV (`sIT600I.RelayStatus`) |
+| TRV relay (heat) | it600MINITRV (`sIT600I.RelayStatus`); attributes name the paired thermostat (`PairedThermostatShortID`) |
 | Receiver relay | it600Receiver |
 | Low battery | Diagnostic child on battery-powered sensors and TRVs |
 | Thermostat problem | Aggregated error flags (Error01–Error32) with descriptions |
+| MiniTRV problem | it600MINITRV fault flags (`TRVError01`, `TRVError23`, `TRVError30`, `TRVError31`) with descriptions |
 | Battery problem | Battery-specific error flags (battery models only) |
 | Open window | TRV open-window detection (`sComm.OpenWindowStatus`) |
 | Wiring centre connectivity | it600WC online status |
@@ -69,6 +70,10 @@ Roller shutters and blinds (RS600): open, close, set position (0-100 %).
 ### Switches
 
 Smart plugs and relays (SP600, SPE600, SR600, and RS600 relay endpoints): on/off control. Dual-endpoint devices exposed as separate entities.
+
+### Mini TRV mode
+
+it600MINITRV: read the reported mode from `BinarySensorDevice.mini_trv_mode` and set Auto, Manual On (open) or Manual Off (closed) with `set_mini_trv_mode(device_id, MiniTrvMode.AUTO)`.
 
 ### RS600 notes
 

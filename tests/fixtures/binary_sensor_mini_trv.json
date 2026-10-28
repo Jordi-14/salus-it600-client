@@ -1,0 +1,41 @@
+{
+  "data": {
+    "UniID": "trv_mini_1",
+    "DeviceType": 100,
+    "Endpoint": 6
+  },
+  "DeviceL": {
+    "DeviceType": 100,
+    "DeviceSubType": 135,
+    "ModelIdentifier_i": "it600MINITRV",
+    "DeviceEndpointNum_i": 1
+  },
+  "sZDO": {
+    "FirmwareVersion": "00910040",
+    "ShortID_d": 4660,
+    "DeviceName": "{\"deviceName\": \"Bedroom TRV\",\"ShortID_d\":4660}"
+  },
+  "sBasicS": {
+    "ModelIdentifier": "it600MINITRV",
+    "HardwareVersion": "65",
+    "ManufactureName": "SALUS"
+  },
+  "sZDOInfo": {
+    "OnlineStatus_i": 1,
+    "OnlineState": 1,
+    "JoinConfigEnd": 1
+  },
+  "sIT600I": {
+    "PairedThermostatShortID": 23917,
+    "RelayStatus": 1,
+    "Mode": 0,
+    "TRVError01": 0,
+    "TRVError22": 0,
+    "TRVError23": 0,
+    "TRVError30": 0,
+    "TRVError31": 0,
+    "LastMessageRSSI_d": -58,
+    "LastMessageLQI_d": 255,
+    "CommandResponse_d": "4131423243334434303030303030303130303230303332383430363831383230323032353138353040333230323336464630303030303030303034383030303031303030373030303738"
+  }
+}

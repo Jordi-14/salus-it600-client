@@ -27,9 +27,11 @@ from .const import (
     TEMPERATURE_SCALE,
     FanMode,
     HoldType,
+    MiniTrvMode,
     SystemMode,
 )
 from .device_models import (
+    MODEL_MINI_TRV,
     is_binary_sensor_summary,
     is_fan_coil_model,
     is_sq610_model,
@@ -56,7 +58,9 @@ from .models import (
 )
 from .parsers import (
     PARSING_EXCEPTIONS,
+    device_short_id,
     parse_binary_diagnostic_devices,
+    parse_binary_relay_sensor_devices,
     parse_binary_sensor_device,
     parse_climate_binary_sensor_devices,
     parse_climate_device,
@@ -88,6 +92,18 @@ _SQ610_WRITE_COOLING_SETPOINT = "SetCoolingSetpoint_x100"
 _SQ610_WRITE_HOLD_TYPE = "SetHoldType"
 _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 _SQ610_WRITE_LOCK_KEY = "SetLockKey"
+# it600MINITRV commands are raw strings written to `sIT600I.SetCommand_d`, as
+# space-separated hex bytes. These are the ones the vendor app sends. After a
+# mode change the app asks the TRV for a status report (`B37`), which updates
+# the gateway's `sIT600I.Mode`; this client does the same. The gateway accepts
+# any SetCommand_d string, so a wrong command fails silently.
+_MINI_TRV_MODE_COMMANDS = {
+    MiniTrvMode.AUTO: "42 33 38 31",
+    MiniTrvMode.MANUAL_ON: "42 33 38 37",
+    MiniTrvMode.MANUAL_OFF: "42 33 38 38",
+}
+_MINI_TRV_STATUS_REQUEST = "42 33 37 00 00 00 00 00 00 00 00 78"
+_MINI_TRV_STATUS_REQUEST_DELAY = 2.0
 # The gateway drops idle keep-alive connections without telling the client, so
 # the next request on a reused connection fails with ServerDisconnectedError.
 # One retry opens a fresh connection; reads and writes are both safe to resend.
@@ -451,6 +467,9 @@ class IT600Gateway:
         self._gateway_device: GatewayDevice | None = None
 
         self._climate_devices: dict[str, ClimateDevice] = {}
+        # Climate device IDs by ZigBee short address, so an it600MINITRV can
+        # name the thermostat it is paired to.
+        self._climate_device_ids_by_short_id: dict[int, str] = {}
 
         self._binary_sensor_devices: dict[str, BinarySensorDevice] = {}
         self._climate_binary_sensor_devices: dict[str, BinarySensorDevice] = {}
@@ -472,6 +491,7 @@ class IT600Gateway:
         self._switch_sensor_devices: dict[str, SensorDevice] = {}
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
         self._wiring_centre_sensor_devices: dict[str, SensorDevice] = {}
+        self._binary_sensor_sensor_devices: dict[str, SensorDevice] = {}
 
     async def connect(self) -> str:
         """Validate gateway access and return the gateway MAC address.
@@ -957,6 +977,19 @@ class IT600Gateway:
     ) -> None:
         local_devices: dict[str, BinarySensorDevice] = {}
         diagnostic_devices: dict[str, BinarySensorDevice] = {}
+        sensor_devices: dict[str, SensorDevice] = {}
+
+        # Signal-quality and MiniTRV temperature readings are not in every
+        # poll, so the previous collection is handed to the parser to carry
+        # the last known value forward.
+        previous_sensors = self._binary_sensor_sensor_devices
+        # Climate devices are refreshed first in each poll, so this matches
+        # the thermostats of the current poll.
+        paired_thermostats = {
+            short_id: self._climate_devices[device_id]
+            for short_id, device_id in self._climate_device_ids_by_short_id.items()
+            if device_id in self._climate_devices
+        }
 
         for device_status in await self._device_detail_statuses(
             devices,
@@ -964,8 +997,15 @@ class IT600Gateway:
         ):
             unique_id = device_status.get("data", {}).get("UniID")
             try:
-                device = parse_binary_sensor_device(device_status)
+                device = parse_binary_sensor_device(
+                    device_status,
+                    paired_thermostats,
+                )
                 diagnostics = parse_binary_diagnostic_devices(device_status)
+                sensors = parse_binary_relay_sensor_devices(
+                    device_status,
+                    previous_sensors,
+                )
             except PARSING_EXCEPTIONS as err:
                 self._log_parse_failure("binary sensor", unique_id, err)
                 continue
@@ -976,8 +1016,12 @@ class IT600Gateway:
             for diagnostic in diagnostics:
                 diagnostic_devices[diagnostic.unique_id] = diagnostic
 
+            for sensor in sensors:
+                sensor_devices[sensor.unique_id] = sensor
+
         self._binary_sensor_devices = local_devices
         self._binary_sensor_diagnostic_devices = diagnostic_devices
+        self._binary_sensor_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s binary sensor devices", len(local_devices))
 
     async def _refresh_climate_devices(
@@ -987,6 +1031,7 @@ class IT600Gateway:
         local_devices: dict[str, ClimateDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
         binary_devices: dict[str, BinarySensorDevice] = {}
+        device_ids_by_short_id: dict[int, str] = {}
 
         # Signal-quality readings are absent from most polls even for healthy
         # devices, so the previous collection is handed to the parser to carry
@@ -1014,6 +1059,10 @@ class IT600Gateway:
 
             local_devices[device.unique_id] = device
 
+            short_id = device_short_id(device_status)
+            if short_id is not None:
+                device_ids_by_short_id[short_id] = device.unique_id
+
             for sensor in sensors:
                 sensor_devices[sensor.unique_id] = sensor
 
@@ -1021,6 +1070,7 @@ class IT600Gateway:
                 binary_devices[binary_sensor.unique_id] = binary_sensor
 
         self._climate_devices = local_devices
+        self._climate_device_ids_by_short_id = device_ids_by_short_id
         self._climate_sensor_devices = sensor_devices
         self._climate_binary_sensor_devices = binary_devices
         _LOGGER.debug("Refreshed %s climate devices", len(local_devices))
@@ -1157,6 +1207,7 @@ class IT600Gateway:
             **self._switch_sensor_devices,
             **self._meter_sensor_devices,
             **self._wiring_centre_sensor_devices,
+            **self._binary_sensor_sensor_devices,
         }
 
     def get_sensor_device(self, device_id: str) -> SensorDevice | None:
@@ -1169,6 +1220,7 @@ class IT600Gateway:
             or self._switch_sensor_devices.get(device_id)
             or self._meter_sensor_devices.get(device_id)
             or self._wiring_centre_sensor_devices.get(device_id)
+            or self._binary_sensor_sensor_devices.get(device_id)
         )
 
     async def fetch_sq610_properties(
@@ -1411,6 +1463,37 @@ class IT600Gateway:
             return
 
         await self._write_device(device, {"sTherUIS": {"SetLockKey": int(locked)}})
+
+    async def set_mini_trv_mode(self, device_id: str, mode: MiniTrvMode) -> None:
+        """Set an it600MINITRV to Auto, Manual On (open) or Manual Off (closed)."""
+
+        # Typed as object so the runtime check is not narrowed away by mypy.
+        raw_mode: object = mode
+        if isinstance(raw_mode, bool) or not isinstance(raw_mode, int):
+            raise TypeError("mode must be a MiniTrvMode")
+        try:
+            mode = MiniTrvMode(raw_mode)
+        except ValueError as err:
+            raise IT600ValidationError(
+                f"mode must be one of {[m.value for m in MiniTrvMode]}, "
+                f"got {raw_mode!r}"
+            ) from err
+
+        device = self._require_device(
+            device_id, self._binary_sensor_devices, "binary sensor"
+        )
+        if device.model != MODEL_MINI_TRV:
+            raise IT600ValidationError(
+                f"binary sensor device {device_id!r} is not an it600MINITRV"
+            )
+
+        await self._write_device(
+            device, {"sIT600I": {"SetCommand_d": _MINI_TRV_MODE_COMMANDS[mode]}}
+        )
+        await asyncio.sleep(_MINI_TRV_STATUS_REQUEST_DELAY)
+        await self._write_device(
+            device, {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}}
+        )
 
     async def set_climate_device_temperature(
         self, device_id: str, setpoint_celsius: float

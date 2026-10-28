@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Add it600MINITRV entities: the TRV's own temperature (decoded from
+  `sIT600I.CommandResponse_d`), RSSI and LQI diagnostic sensors, and a problem
+  binary sensor for the `TRVError01`/`23`/`30`/`31` fault flags. The TRV
+  temperature is decoded for both paired and unpaired TRVs, and keeps its last
+  reading when a poll omits the report, as the
+  signal sensors already do. it600Receiver also gets RSSI and LQI sensors when
+  its payload carries them.
+- The it600MINITRV heat sensor's attributes name the paired thermostat
+  (`paired_thermostat_short_id`, plus `paired_thermostat_id` and
+  `paired_thermostat_name` when that thermostat is on the same gateway).
+- Add `IT600Gateway.set_mini_trv_mode()` and the `MiniTrvMode` enum to set an
+  it600MINITRV to Auto, Manual On (open) or Manual Off (closed). The reported
+  `sIT600I.Mode` is exposed as `BinarySensorDevice.mini_trv_mode`.
+- Export `decode_mini_trv_report()`, `MiniTrvReport` and `device_short_id()`
+  from `salus_it600.parsers`.
+
 ## 0.7.0 - 2026-10-26
 
 - Promote the tested 0.7.0b1 beta to stable with no runtime changes.
