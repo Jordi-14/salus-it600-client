@@ -121,12 +121,18 @@ def parse_advanced_settings(th: dict[str, Any]) -> ThermostatAdvancedSettings | 
     the wire; `Status_2_d` is preferred because the legacy `Schedule` name
     misdescribes the contents.
     """
-    blob = th.get("Status_2_d")
-    if not isinstance(blob, str):
-        blob = th.get("Schedule")
-    if not isinstance(blob, str) or len(blob) != ADVANCED_SETTINGS_HEX_LENGTH:
-        return None
-    if not blob.startswith(ADVANCED_SETTINGS_HEADER):
+    # A present but empty/truncated preferred alias must not hide a valid
+    # legacy alias. This read fallback does not relax the writer's requirement
+    # that both aliases agree before modifying a setting.
+    blob = None
+    for candidate in (th.get("Status_2_d"), th.get("Schedule")):
+        if (
+            isinstance(candidate, str) and len(candidate) == ADVANCED_SETTINGS_HEX_LENGTH
+            and candidate.startswith(ADVANCED_SETTINGS_HEADER)
+        ):
+            blob = candidate
+            break
+    if blob is None:
         return None
 
     # Byte offsets follow the table in the module docstring and
