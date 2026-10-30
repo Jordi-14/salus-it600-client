@@ -10,36 +10,64 @@ three 4-digit decimal groups before the first `@` are temperatures x100, in
 this order: the paired thermostat's temperature, the TRV's own temperature,
 and the setpoint. For example::
 
-    A1B2C3D400000001002003284068 1820 2025 1850 @320236FF...
+    A1B2C3D 4000000010020032 8 4068 1820 2025 1850 @ 320236FF...
 
 (spaces added) decodes to thermostat 18.20, TRV 20.25 and setpoint 18.50,
-which was checked against the vendor app (which rounds to 0.5 degrees).
+which was checked against the vendor app (which rounds to 0.5 degrees). The
+whole section before the first `@` must have this shape (a 7-character hex
+identifier ending in the short address, 16 status digits, one free character,
+an undecoded 4-digit group and the three temperatures), and at least 16 hex
+characters must follow the `@`.
+
+The free character at index 23 changes over time and is not always a digit:
+real reports hold digits, `,` and `.` there. Its meaning is unknown.
 
 An unpaired TRV (characters 3-6 are `FFFF`, the unpaired short address) uses a
 different layout with no `@`. Its own temperature is the 4-digit group at
 character 28, written twice in a row, with no thermostat temperature or
 setpoint::
 
-    B37FFFF0000000000000000 2407 4 2418 2418 150 0022...
+    B37FFFF 0000000000000000 2 4074 2418 2418 1500022032600000000
 
 (spaces added) decodes to TRV 24.18, which matched the vendor app across a
 falling series of samples. The position matters: at 24.94 the string holds
 `...4 2494 2494 1...`, which also contains the repeat `4249 4249` one
-character earlier. The rest of the string is not decoded.
+character earlier. The characters around the reading are not decoded, but must
+be present in full.
+
+Anything else, including a string that merely contains a plausible-looking
+group of digits, is rejected rather than searched for a reading.
 """
 
 from __future__ import annotations
 
-import re
+import string
 from typing import Any, NamedTuple
 
 from ..const import TEMPERATURE_SCALE
 
-_REPORT_PATTERN = re.compile(r"(\d{4})(\d{4})(\d{4})@")
-_UNPAIRED_PATTERN = re.compile(r"(\d{4})\1")
-_UNPAIRED_TEMPERATURE_OFFSET = 28
+# Fields shared by both layouts, as positions in the decoded string.
+_IDENTIFIER = slice(0, 7)
+_SHORT_ID = slice(3, 7)
+_STATUS = slice(7, 23)
+_FREE_CHARACTER = 23
+_UNDECODED = slice(24, 28)
+
+# Paired layout.
+_THERMOSTAT_TEMPERATURE = slice(28, 32)
+_TRV_TEMPERATURE = slice(32, 36)
+_SETPOINT = slice(36, 40)
+_SEPARATOR = "@"
+_SEPARATOR_INDEX = 40
+_PAIRED_TAIL = slice(41, None)
+_MIN_PAIRED_TAIL_LENGTH = 16
+
+# Unpaired layout.
 _UNPAIRED_SHORT_ID = "FFFF"
-_SHORT_ID_SLICE = slice(3, 7)
+_READING = slice(28, 32)
+_READING_REPEAT = slice(32, 36)
+_UNPAIRED_TAIL = slice(36, None)
+_MIN_UNPAIRED_TAIL_LENGTH = 19
 
 # A TRV temperature outside this range is treated as a decoding error rather
 # than a reading. The upper bound is far above any room temperature but still
@@ -60,19 +88,65 @@ def _plausible(temperature: float) -> bool:
     return _MIN_TRV_TEMPERATURE < temperature <= _MAX_TRV_TEMPERATURE
 
 
+def _is_hex(text: str) -> bool:
+    return all(character in string.hexdigits for character in text)
+
+
+def _temperature(text: str) -> float:
+    return int(text) / TEMPERATURE_SCALE
+
+
+def _has_common_fields(text: str) -> bool:
+    """Return whether the fields shared by both layouts are well formed."""
+    return (
+        len(text) >= _UNDECODED.stop
+        and _is_hex(text[_IDENTIFIER])
+        and text[_STATUS].isdigit()
+        and text[_FREE_CHARACTER].isprintable()
+        and text[_UNDECODED].isdigit()
+    )
+
+
+def _decode_paired(text: str) -> MiniTrvReport | None:
+    """Return the temperatures from a paired TRV's report."""
+    thermostat = text[_THERMOSTAT_TEMPERATURE]
+    trv = text[_TRV_TEMPERATURE]
+    setpoint = text[_SETPOINT]
+    tail = text[_PAIRED_TAIL]
+    if (
+        not _has_common_fields(text)
+        or not thermostat.isdigit()
+        or not trv.isdigit()
+        or not setpoint.isdigit()
+        or len(tail) < _MIN_PAIRED_TAIL_LENGTH
+        or not _is_hex(tail)
+        or not _plausible(_temperature(trv))
+    ):
+        return None
+    return MiniTrvReport(
+        thermostat_temperature=_temperature(thermostat),
+        trv_temperature=_temperature(trv),
+        setpoint=_temperature(setpoint),
+    )
+
+
 def _decode_unpaired(text: str) -> MiniTrvReport | None:
     """Return the TRV temperature from an unpaired TRV's report."""
-    if text[_SHORT_ID_SLICE].upper() != _UNPAIRED_SHORT_ID:
-        return None
-    match = _UNPAIRED_PATTERN.match(text, _UNPAIRED_TEMPERATURE_OFFSET)
-    if match is None:
-        return None
-    trv = int(match.group(1)) / TEMPERATURE_SCALE
-    if not _plausible(trv):
+    reading = text[_READING]
+    tail = text[_UNPAIRED_TAIL]
+    if (
+        not _has_common_fields(text)
+        or text[_SHORT_ID].upper() != _UNPAIRED_SHORT_ID
+        or not reading.isdigit()
+        or text[_READING_REPEAT] != reading
+        or len(tail) < _MIN_UNPAIRED_TAIL_LENGTH
+        or not _is_hex(tail)
+        or not _plausible(_temperature(reading))
+    ):
         return None
     return MiniTrvReport(
         thermostat_temperature=None,
-        trv_temperature=trv,
+        trv_temperature=_temperature(reading),
         setpoint=None,
     )
 
@@ -80,9 +154,9 @@ def _decode_unpaired(text: str) -> MiniTrvReport | None:
 def decode_mini_trv_report(value: Any) -> MiniTrvReport | None:
     """Decode the temperatures packed into `sIT600I.CommandResponse_d`.
 
-    Returns None when the value is missing, is not hex-encoded ASCII, matches
-    neither the paired (`<4 digits x3>@`) nor the unpaired layout, or holds an
-    implausible TRV temperature.
+    Returns None when the value is missing, is not hex-encoded ASCII, does not
+    have the full paired (first `@` at index 40) or unpaired (no `@`) layout, or
+    holds an implausible TRV temperature.
     """
     if not isinstance(value, str) or not value:
         return None
@@ -93,18 +167,9 @@ def decode_mini_trv_report(value: Any) -> MiniTrvReport | None:
         # Covers both invalid hex and UnicodeDecodeError.
         return None
 
-    match = _REPORT_PATTERN.search(text)
-    if match is None:
+    separator_index = text.find(_SEPARATOR)
+    if separator_index == _SEPARATOR_INDEX:
+        return _decode_paired(text)
+    if separator_index == -1:
         return _decode_unpaired(text)
-
-    thermostat, trv, setpoint = (
-        int(group) / TEMPERATURE_SCALE for group in match.groups()
-    )
-    if not _plausible(trv):
-        return None
-
-    return MiniTrvReport(
-        thermostat_temperature=thermostat,
-        trv_temperature=trv,
-        setpoint=setpoint,
-    )
+    return None

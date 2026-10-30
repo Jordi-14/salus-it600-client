@@ -185,8 +185,8 @@ A1B2C3D400000001002003284068 1820 2025 1850 @320236FF...
 ```
 
 That is thermostat 18.20 °C, TRV 20.25 °C and setpoint 18.50 °C. The values
-were checked against the vendor app, which rounds to 0.5 °C. The group before
-`4068` changes with `RelayStatus` and is not decoded.
+were checked against the vendor app, which rounds to 0.5 °C. The `4068` group is
+not decoded.
 
 An unpaired TRV reports `FFFF` (the unpaired short address) at characters 3-6
 of the decoded string, and the string has no `@`. Its own temperature is the
@@ -202,6 +202,21 @@ samples. The repeat must be read at character 28 rather than searched for: at
 24.94 °C the string holds `...4 2494 2494 1...`, which also contains the repeat
 `4249 4249` one character earlier. The rest of the unpaired string is not
 decoded.
+
+The decoder checks the whole layout rather than searching for a reading. Both
+layouts start with a 7-character hex identifier ending in the short address,
+then 13 status digits and a 4-character valve position at characters 20-23.
+Next comes a 4-digit group.
+A paired TRV then has the three temperatures, the first `@` at index 40 and at
+least 16 hex characters. An unpaired TRV has the repeated reading and at least
+19 hex characters. Anything else, such as an unrelated or truncated response,
+reports no reading.
+
+The valve position is checked for shape but not decoded. Two TRVs tested read
+about 0 when closed and 2241-2247 when open. Each character is `'0' + n`, so
+slightly past closed the last character drops below `0` in ASCII: `*` (`2A`) is
+-6, `+` is -5, `,` is -4 and `.` (`2E`) is -2. Characters 15-17, within the
+status digits, follow the mode: `000` Auto, `111` Manual on, `020` Manual off.
 
 In both layouts, a TRV temperature outside 0-60 °C (exclusive of 0) is treated
 as a decoding error, and no reading is reported.

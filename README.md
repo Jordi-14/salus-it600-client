@@ -31,7 +31,7 @@ what is deliberately not decoded.
 
 | Sensor | Source |
 |---|---|
-| Temperature | Standalone sensors (TS600, PS600), thermostat readings, and it600MINITRV (decoded from `sIT600I.CommandResponse_d`) |
+| Temperature | Standalone sensors (TS600, PS600), thermostat readings and it600MINITRV (decoded from `sIT600I.CommandResponse_d`) |
 | Humidity | SQ610 (`SunnySetpoint_x100`) and standalone multi-sensors |
 | Floor temperature | SQ610 with external floor probe (`OUTSensorProbe`) |
 | Battery | Status_d (SQ610RF) and voltage curves (TRV, window/door sensors) |
