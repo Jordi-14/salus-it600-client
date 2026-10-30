@@ -165,8 +165,9 @@ system, and the single point of failure for every zone it serves.
 
 ## Mini TRV (it600MINITRV)
 
-The it600MINITRV is a slave actuator paired to one thermostat. Its payload has
-no `sIT600TH`/`sTherS` block, so it is classified as a relay binary sensor.
+The it600MINITRV is a slave actuator, normally paired to one thermostat but also
+usable unpaired. Its payload has no `sIT600TH`/`sTherS` block, so it is
+classified as a relay binary sensor.
 
 | Field | Meaning |
 | --- | --- |
@@ -175,47 +176,54 @@ no `sIT600TH`/`sTherS` block, so it is classified as a relay binary sensor.
 | `sIT600I.PairedThermostatShortID` | ZigBee short address of the paired thermostat; matches that thermostat's `sZDO.ShortID_d`. `0` and `65535` mean unpaired |
 | `sIT600I.TRVError01`, `TRVError23`, `TRVError30`, `TRVError31` | Fault flags: hardware issue, message from unpaired TRV, gear issue, adaptation issue (`MINI_TRV_ERROR_CODES`) |
 | `sIT600I.TRVError22` | Low battery |
-| `sIT600I.CommandResponse_d` | Hex-encoded ASCII report. For a paired TRV, the last three 4-digit decimal groups before the first `@` are temperatures x100: paired thermostat temperature, TRV temperature, setpoint. An unpaired TRV uses a different layout (below). Decoded by `decode_mini_trv_report()` |
+| `sIT600I.CommandResponse_d` | Hex-encoded ASCII report. For a paired TRV, characters 28-39 are temperatures x100: paired thermostat temperature, TRV temperature, setpoint. An unpaired TRV holds only its own temperature (see the layout below). Decoded by `decode_mini_trv_report()` |
 
-A decoded `CommandResponse_d` looks like this (spaces added, identifiers
-replaced):
+The report is the reply to the `B37` status request (see "Setting the mode"). The
+evidence for this is the vendor app's per-model table, which pairs that request
+with an expected `CommandResponse_d` start of hex `423337` (`B37`), and live
+reports from two different TRVs, one paired and one unpaired, which both start
+with `B37`.
 
-```text
-A1B2C3D400000001002003284068 1820 2025 1850 @320236FF...
-```
+A decoded report has this layout (short address and some trailing bytes replaced
+in the paired example, trailing bytes shortened in the unpaired one):
 
-That is thermostat 18.20 °C, TRV 20.25 °C and setpoint 18.50 °C. The values
-were checked against the vendor app, which rounds to 0.5 °C. The `4068` group is
-not decoded.
+| Characters | Field | Paired example | Unpaired example |
+| --- | --- | --- | --- |
+| 0-2 | Response ID, always `B37` | `B37` | `B37` |
+| 3-6 | Short address (`FFFF` when unpaired) | `A1B2` | `FFFF` |
+| 7-19 | Status digits, with mode flags at 15-17 | `4000000010020` | `0000000000000` |
+| 20-23 | Valve position | `0328` | `0002` |
+| 24-27 | Not decoded | `4068` | `4074` |
+| 28-31 | Paired: thermostat temperature. Unpaired: TRV temperature | `1820` | `2418` |
+| 32-35 | Paired: TRV temperature. Unpaired: the same reading repeated | `2025` | `2418` |
+| 36-39 | Paired: setpoint. Unpaired: start of the undecoded tail | `1850` | `1500` |
+| 40 onwards | Paired: `@` at 40, then an undecoded tail. Unpaired: rest of the tail | `@320236FF...` | `022032600000000` |
 
-An unpaired TRV reports `FFFF` (the unpaired short address) at characters 3-6
-of the decoded string, and the string has no `@`. Its own temperature is the
-4-digit group at character 28, written twice in a row. There is no thermostat
-temperature or setpoint:
+The paired example is thermostat 18.20 °C, TRV 20.25 °C and setpoint 18.50 °C,
+checked against the vendor app, which rounds to 0.5 °C. The unpaired example is
+TRV 24.18 °C, which matched the vendor app across a falling series of samples.
+An unpaired report has no `@`, thermostat temperature or setpoint. Its repeat
+must be read at character 28 rather than searched for: at 24.94 °C the string
+holds `...4 2494 2494 1...`, which also contains the repeat `4249 4249` one
+character earlier.
 
-```text
-B37FFFF0000000000000000 2407 4 2418 2418 150 0022...
-```
-
-That is TRV 24.18 °C, which matched the vendor app across a falling series of
-samples. The repeat must be read at character 28 rather than searched for: at
-24.94 °C the string holds `...4 2494 2494 1...`, which also contains the repeat
-`4249 4249` one character earlier. The rest of the unpaired string is not
-decoded.
-
-The decoder checks the whole layout rather than searching for a reading. Both
-layouts start with a 7-character hex identifier ending in the short address,
-then 13 status digits and a 4-character valve position at characters 20-23.
-Next comes a 4-digit group.
-A paired TRV then has the three temperatures, the first `@` at index 40 and at
-least 16 hex characters. An unpaired TRV has the repeated reading and at least
-19 hex characters. Anything else, such as an unrelated or truncated response,
+`CommandResponse_d` can carry other responses too: one SQ610RF payload holds
+`42323000` (`B20` and a null byte), and the vendor app expects `B70` from the
+it600WC and `B71` from the it600Receiver. So the decoder checks the whole layout
+rather than searching for a reading, and an unrelated or truncated response
 reports no reading.
+
+The minimum tails (16 hex characters after a paired `@`, 19 from character 36 of
+an unpaired report) are lower limits based on edited samples, not protocol rules.
+The complete reports available, one paired from a real TRV and one unpaired
+stored in the vendor app, are both 73 characters and hold hex letters in the
+tail. Characters 49-50 are probably RSSI as a signed byte, which is not decoded;
+`sIT600I.LastMessageRSSI_d` reports signal strength instead.
 
 The valve position is checked for shape but not decoded. Two TRVs tested read
 about 0 when closed and 2241-2247 when open. Each character is `'0' + n`, so
 slightly past closed the last character drops below `0` in ASCII: `*` (`2A`) is
--6, `+` is -5, `,` is -4 and `.` (`2E`) is -2. Characters 15-17, within the
+-6, `+` is -5, `,` is -4, `.` (`2E`) is -2 and `/` is -1. Characters 15-17, within the
 status digits, follow the mode: `000` Auto, `111` Manual on, `020` Manual off.
 
 In both layouts, a TRV temperature outside 0-60 °C (exclusive of 0) is treated
@@ -238,6 +246,12 @@ change the vendor app asks the TRV for a status report, and the client does the
 same: it waits 2 seconds and then writes
 `42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight zero bytes, `x`). The new
 mode shows on a later poll.
+
+A full valve stroke takes about 50-55 seconds. In testing, an unpaired TRV
+reported position changes during the move when asked every 15 seconds. A paired
+TRV only sent a new report after each move had finished, about 40-50 seconds
+after the command. That is from one unit of each, and the paired TRV may ignore
+the status request or simply report less often.
 
 The gateway accepts any `SetCommand_d` string, so a wrong command fails
 silently. Only the three modes above are accepted; fail-safe and adaptation

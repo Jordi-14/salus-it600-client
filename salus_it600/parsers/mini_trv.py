@@ -10,24 +10,30 @@ three 4-digit decimal groups before the first `@` are temperatures x100, in
 this order: the paired thermostat's temperature, the TRV's own temperature,
 and the setpoint. For example::
 
-    A1B2C3D 4000000010020032 8 4068 1820 2025 1850 @ 320236FF...
+    B37A1B2 4000000010020 0328 4068 1820 2025 1850 @ 320236FF...
 
 (spaces added) decodes to thermostat 18.20, TRV 20.25 and setpoint 18.50,
 which was checked against the vendor app (which rounds to 0.5 degrees). The
-whole section before the first `@` must have this shape (a 7-character hex
-identifier ending in the short address, 16 status digits, one free character,
+whole section before the first `@` must have this shape (`B37`, a 4-character hex
+short address, 13 status digits, the valve position,
 an undecoded 4-digit group and the three temperatures), and at least 16 hex
 characters must follow the `@`.
 
-The free character at index 23 changes over time and is not always a digit:
-real reports hold digits, `,` and `.` there. Its meaning is unknown.
+The valve position, at characters 20-23, runs from about 0 (closed) to about
+2240 (open). Each character is `'0' + n`, so when the motor goes slightly past
+closed, the last one drops below `0` in ASCII: `*` is -6 and `.` is -2. It is
+checked for shape here but not decoded.
+
+`B37` identifies the report as the reply to the status request written to
+`sIT600I.SetCommand_d`; the vendor app checks for the same prefix. The field also
+carries other responses, such as `B20` from a thermostat.
 
 An unpaired TRV (characters 3-6 are `FFFF`, the unpaired short address) uses a
 different layout with no `@`. Its own temperature is the 4-digit group at
 character 28, written twice in a row, with no thermostat temperature or
 setpoint::
 
-    B37FFFF 0000000000000000 2 4074 2418 2418 1500022032600000000
+    B37FFFF 0000000000000 0002 4074 2418 2418 1500022032600000000
 
 (spaces added) decodes to TRV 24.18, which matched the vendor app across a
 falling series of samples. The position matters: at 24.94 the string holds
@@ -47,10 +53,11 @@ from typing import Any, NamedTuple
 from ..const import TEMPERATURE_SCALE
 
 # Fields shared by both layouts, as positions in the decoded string.
-_IDENTIFIER = slice(0, 7)
+_RESPONSE_ID = "B37"
 _SHORT_ID = slice(3, 7)
-_STATUS = slice(7, 23)
-_FREE_CHARACTER = 23
+_STATUS = slice(7, 20)
+_VALVE_POSITION_LEADING = slice(20, 23)
+_VALVE_POSITION_LAST = 23  # Not always a digit; see the module docstring.
 _UNDECODED = slice(24, 28)
 
 # Paired layout.
@@ -100,9 +107,11 @@ def _has_common_fields(text: str) -> bool:
     """Return whether the fields shared by both layouts are well formed."""
     return (
         len(text) >= _UNDECODED.stop
-        and _is_hex(text[_IDENTIFIER])
+        and text.startswith(_RESPONSE_ID)
+        and _is_hex(text[_SHORT_ID])
         and text[_STATUS].isdigit()
-        and text[_FREE_CHARACTER].isprintable()
+        and text[_VALVE_POSITION_LEADING].isdigit()
+        and text[_VALVE_POSITION_LAST].isprintable()
         and text[_UNDECODED].isdigit()
     )
 

@@ -22,12 +22,16 @@ from salus_it600.parsers import (
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 # Decoded CommandResponse_d samples from a real it600MINITRV, with the leading
-# identifier and trailing bytes replaced by placeholders. The `.` at index 23
-# is real gateway data.
-SAMPLE_IDLE = "A1B2C3D0000000000000000.4068236022762100@320243FF00000000"
-SAMPLE_HEATING = "A1B2C3D400000001002003284068182020251850@320236FF00000000"
+# short address and trailing bytes replaced by placeholders. The `.` at index 23
+# is real gateway data: a fully closed valve position of -2.
+SAMPLE_IDLE = "B37A1B20000000000000000.4068236022762100@320243FF00000000"
+SAMPLE_HEATING = "B37A1B2400000001002003284068182020251850@320236FF00000000"
 # Unpaired TRV (short address FFFF): no `@`, TRV temperature written twice.
 SAMPLE_UNPAIRED = "B37FFFF000000000000000024074241824181500022032600000000"
+# Unpaired report stored in the vendor app, complete and unedited.
+SAMPLE_VENDOR = (
+    "B37FFFF0000000000000000/28342672267205002220292FFE40000114800001000600078"
+)
 # At 24.94 the digits also hold the repeat "4249 4249", one character early.
 SAMPLE_UNPAIRED_SHIFTED_REPEAT = (
     "B37FFFF000000000000000024074249424941500022032600000000"
@@ -129,9 +133,9 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
             "odd-length hex": _hex(SAMPLE_HEATING)[:-1],
             "non-ascii bytes": "FF" + _hex(SAMPLE_HEATING),
             "no separator": _hex(SAMPLE_HEATING.replace("@", "#")),
-            "too few digits": _hex("A1B2C3D4.18202025@3202"),
-            "zero trv temperature": _hex("A1B2C3D4.182000001850@3202"),
-            "implausible trv temperature": _hex("A1B2C3D4.182075001850@3202"),
+            "too few digits": _hex("B37A1B2.18202025@3202"),
+            "zero trv temperature": _hex("B37A1B2.182000001850@3202"),
+            "implausible trv temperature": _hex("B37A1B2.182075001850@3202"),
             "unpaired without repeat": _hex("B37FFFF.24074241824191500022"),
             "unpaired only zeros repeat": _hex("B37FFFF0000000000000000.1500"),
         }
@@ -139,27 +143,46 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
             with self.subTest(label):
                 self.assertIsNone(decode_mini_trv_report(value))
 
-    def test_index_23_is_a_free_character(self) -> None:
-        # Real reports hold digits, `,` (2C) and `.` (2E) at this position.
-        for character in "28,.":
-            with self.subTest(character):
+    def test_accepts_observed_valve_positions(self) -> None:
+        # Characters 20-23: closed readings fall below `0` in the last character.
+        for position in (
+            "000*",
+            "000+",
+            "000,",
+            "000.",
+            "000/",
+            "0005",
+            "1433",
+            "2241",
+        ):
+            with self.subTest(position):
                 paired = decode_mini_trv_report(
-                    _hex(SAMPLE_IDLE[:23] + character + SAMPLE_IDLE[24:])
+                    _hex(SAMPLE_IDLE[:20] + position + SAMPLE_IDLE[24:])
                 )
                 unpaired = decode_mini_trv_report(
-                    _hex(SAMPLE_UNPAIRED[:23] + character + SAMPLE_UNPAIRED[24:])
+                    _hex(SAMPLE_UNPAIRED[:20] + position + SAMPLE_UNPAIRED[24:])
                 )
 
                 assert paired is not None and unpaired is not None
                 self.assertEqual(22.76, paired.trv_temperature)
                 self.assertEqual(24.18, unpaired.trv_temperature)
 
-    def test_unpaired_tail_may_hold_hex(self) -> None:
-        # The paired tail holds hex bytes; the unpaired sample's are placeholders.
-        report = decode_mini_trv_report(_hex(SAMPLE_UNPAIRED[:-8] + "C6EA8820"))
+    def test_decodes_vendor_sample(self) -> None:
+        # Its tail holds hex letters and its valve position ends in `/`.
+        report = decode_mini_trv_report(_hex(SAMPLE_VENDOR))
 
         assert report is not None
-        self.assertEqual(24.18, report.trv_temperature)
+        self.assertEqual(26.72, report.trv_temperature)
+
+    def test_rejects_other_response_ids(self) -> None:
+        cases = {
+            "wiring centre, paired layout": "B70" + SAMPLE_HEATING[3:],
+            "receiver, unpaired layout": "B71" + SAMPLE_UNPAIRED[3:],
+            "placeholder identifier": "A1B" + SAMPLE_HEATING[3:],
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.assertIsNone(decode_mini_trv_report(_hex(text)))
 
     def test_rejects_unrelated_responses_with_plausible_digits(self) -> None:
         cases = {
