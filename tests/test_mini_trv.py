@@ -304,6 +304,26 @@ class TestMiniTrvParsers(unittest.TestCase):
         self.assertEqual(20.25, second["trv_mini_1_temperature"].state)
         self.assertFalse(second["trv_mini_1_temperature"].available)
 
+    def test_temperature_is_carried_forward_over_mode_command_replies(self) -> None:
+        # The reply format is unknown, so these cover plausible shapes: the bare
+        # command, and a report layout with digits a search could misread.
+        first = {
+            sensor.unique_id: sensor
+            for sensor in parse_binary_relay_sensor_devices(_mini_trv_payload())
+        }
+
+        for command in ("B381", "B387", "B388"):
+            for reply in (command, command + SAMPLE_HEATING[4:]):
+                with self.subTest(reply):
+                    second = {
+                        sensor.unique_id: sensor
+                        for sensor in parse_binary_relay_sensor_devices(
+                            _mini_trv_payload(CommandResponse_d=_hex(reply)), first
+                        )
+                    }
+
+                    self.assertEqual(20.25, second["trv_mini_1_temperature"].state)
+
     def test_no_temperature_until_a_report_decodes(self) -> None:
         sensors = parse_binary_relay_sensor_devices(
             _mini_trv_payload(CommandResponse_d="not hex")
