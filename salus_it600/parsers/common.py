@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
@@ -38,11 +37,7 @@ def _numeric_value(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int | float):
-        try:
-            numeric = float(value)
-        except OverflowError:
-            return None
-        return numeric if math.isfinite(numeric) else None
+        return float(value)
     return None
 
 

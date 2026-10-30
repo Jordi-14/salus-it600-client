@@ -19,14 +19,13 @@ NON_SETTINGS_RESPONSE = "4233344c"
 
 
 _DEVICE_METADATA = frozenset((1, 40, 41))
-_PROTECTED = (
-    "HoldType", "SystemMode", "HeatingSetpoint_x100", "CoolingSetpoint_x100",
-    "LockKey", "LockKey_a", "HeatingControl", "CoolingControl",
-    "PairedWCNumber", "PairedTRVShortID", "ProgramOperationMode", "ScheduleType",
-)
 
 
-def _validated_settings(
+def comfort_command_response(status: dict[str, Any]) -> str:
+    """Return a normalized shared command response, including missing sections."""
+    section = status.get("sIT600I")
+    return str(section.get("CommandResponse_d", "")).lower() if isinstance(section, dict) else ""
+def validated_comfort_settings(
     status: dict[str, Any], *, check_command: bool = True,
 ) -> bytes:
     """Validate the complete read snapshot before allowing any encoding."""
@@ -82,7 +81,7 @@ def _validated_settings(
 def supports_comfort_warm_floor_write(status: dict[str, Any]) -> bool:
     """Return whether this snapshot satisfies the verified write profile."""
     try:
-        _validated_settings(status)
+        validated_comfort_settings(status)
     except (IT600ValidationError, AttributeError, TypeError, ValueError):
         return False
     return True
@@ -96,13 +95,15 @@ def supports_comfort_warm_floor_profile(status: dict[str, Any]) -> bool:
     Model, firmware, settings layout and the PIN-required flag remain guarded.
     """
     try:
-        _validated_settings(status, check_command=False)
+        validated_comfort_settings(status, check_command=False)
     except (IT600ValidationError, AttributeError, TypeError, ValueError):
         return False
     return True
 
 
-def build_comfort_warm_floor_command(status: dict[str, Any], level: int) -> str | None:
+def build_comfort_warm_floor_command(
+    status: dict[str, Any], level: int, *, check_command: bool = True,
+) -> str | None:
     """Encode one level change, preserving every other settings byte.
 
     Return None when the requested level is already reported. Never invent a
@@ -112,7 +113,7 @@ def build_comfort_warm_floor_command(status: dict[str, Any], level: int) -> str 
         raise TypeError("comfort warm floor level must be an integer")
     if level not in range(4):
         raise IT600ValidationError("comfort warm floor level must be 0, 1, 2 or 3")
-    base = _validated_settings(status)
+    base = validated_comfort_settings(status, check_command=check_command)
     if base[39] == level:
         return None
     body = bytearray(base[:60])
@@ -121,46 +122,20 @@ def build_comfort_warm_floor_command(status: dict[str, Any], level: int) -> str 
     return "423131" + body.hex()
 
 
-def _same_protected_settings(before: dict[str, Any], after: dict[str, Any]) -> bool:
-    """Compare everything except comfort and device-maintained metadata."""
-    base = _validated_settings(before, check_command=False)
-    current = _validated_settings(after, check_command=False)
-    return (
-        before.get("data") == after.get("data")
-        and all(base[i] == current[i] for i in range(77) if i not in _DEVICE_METADATA and i != 39)
-        and before.get("sScheS") == after.get("sScheS")
-        and all(before["sIT600TH"].get(key) == after["sIT600TH"].get(key) for key in _PROTECTED)
-    )
 
+def comfort_command_matches(status: dict[str, Any], command: str) -> bool:
+    """Match the fields B11 controls, ignoring live HVAC fields and shared echo.
 
-def _command_applied(before: dict[str, Any], after: dict[str, Any], command: str) -> bool:
-    """Confirm the requested level and protected data, not predicted counters."""
-    current = _validated_settings(after, check_command=False)
-    echo = str(after.get("sIT600I", {}).get("CommandResponse_d", "")).lower()
-    return (
-        current[39] == bytes.fromhex(command)[42]
-        and _same_protected_settings(before, after)
-        and echo in (command.lower() + "00", NON_SETTINGS_RESPONSE)
-    )
-
-
-def confirmed_comfort_warm_floor_change(before: dict[str, Any], after: dict[str, Any], level: int) -> bool:
-    """Resolve a durable journal, including commands sent by older encoders.
-
-    No command is reconstructed or replayed. Require the actual requested
-    change, all protected settings and a successful matching settings echo.
-    Only device-maintained metadata may differ in the old command echo.
+    The caller checks fresh identity/online status. Device-owned metadata and
+    the read/write marker differ legitimately. B11 writes the first 60 bytes;
+    runtime setpoints, hold mode and weekly schedules are not part of that body.
     """
-    if type(level) is not int or level not in range(4):
+    current = validated_comfort_settings(status, check_command=False)
+    try:
+        frame = bytes.fromhex(command)
+    except (TypeError, ValueError):
         return False
-    base = _validated_settings(before, check_command=False)
-    current = _validated_settings(after, check_command=False)
-    if base[39] == level or current[39] != level or not _same_protected_settings(before, after):
+    if len(frame) != 63 or frame[:4] != bytes.fromhex("42313173"):
         return False
-    echo = after.get("sIT600I", {}).get("CommandResponse_d")
-    if isinstance(echo, str) and echo.lower() == NON_SETTINGS_RESPONSE:
-        return True
-    if not isinstance(echo, str) or not re.fullmatch(r"42313173[0-9a-fA-F]{118}00", echo, re.IGNORECASE):
-        return False
-    body = bytes.fromhex(echo)[3:63]
-    return all(body[i] == current[i] for i in range(1, 60) if i not in _DEVICE_METADATA)
+    body = frame[3:]
+    return all(current[i] == body[i] for i in range(60) if i not in _DEVICE_METADATA and i != 0)

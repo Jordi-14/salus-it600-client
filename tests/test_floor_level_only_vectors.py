@@ -6,9 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from salus_it600.comfort_warm_floor import build_comfort_warm_floor_command
+from salus_it600.comfort_warm_floor import (
+    build_comfort_warm_floor_command,
+    comfort_command_matches,
+)
 from tests.test_comfort_warm_floor import setup_gateway, status_fixture
-from tests.test_floor_beta import envelope
+from tests.test_floor_command_lifecycle import envelope
 
 EVIDENCE = json.loads((Path(__file__).parent / 'fixtures/comfort_warm_floor_level_only.json').read_text())
 
@@ -31,24 +34,17 @@ async def test_exact_hardware_level_only_write_and_device_counter_readback(monke
     assert [i for i in range(60) if base[i] != body[i]] == [0, 39]
     assert bytes.fromhex(vector['after'])[1] == base[1] + 1
     gateway, _ = setup_gateway()
-    gateway._make_encrypted_request = AsyncMock(side_effect=[envelope(before), envelope(before), envelope(after)])
-    monkeypatch.setattr('salus_it600.gateway.asyncio.sleep', AsyncMock())
-    await gateway.set_climate_device_comfort_warm_floor('device-1', vector['targetLevel'], confirmation_timeout=1)
-    assert not gateway._pending_floor_commands
-    assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ['read', 'write', 'read']
+    gateway._make_encrypted_request = AsyncMock(side_effect=[envelope(before), envelope(before)])
+    await gateway.set_climate_device_comfort_warm_floor('device-1', vector['targetLevel'])
+    assert comfort_command_matches(after, command)
+    assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ['read', 'write']
 
 
-async def test_next_command_after_unconfirmed_reply_uses_fresh_device_metadata(monkeypatch):
+async def test_next_command_uses_new_device_metadata():
     vectors = EVIDENCE['vectors']
-    before = snapshot(vectors[0])
-    on = snapshot(vectors[0], True)
-    off = snapshot(vectors[1], True)
     gateway, _ = setup_gateway()
-    gateway._make_encrypted_request = AsyncMock(side_effect=[envelope(before), envelope(before), envelope(on), envelope(on), envelope(off)])
-    monkeypatch.setattr('salus_it600.gateway.asyncio.sleep', AsyncMock())
+    gateway._make_encrypted_request = AsyncMock(side_effect=[envelope(snapshot(vectors[0])), envelope(snapshot(vectors[0])), envelope(snapshot(vectors[1])), envelope(snapshot(vectors[1]))])
     await gateway.set_climate_device_comfort_warm_floor('device-1', 1)
-    assert gateway._pending_floor_commands
-    await gateway.set_climate_device_comfort_warm_floor('device-1', 0, confirmation_timeout=1)
+    await gateway.set_climate_device_comfort_warm_floor('device-1', 0)
     writes = [c.args[1]['id'][0]['sIT600I']['SetCommand_d'] for c in gateway._make_encrypted_request.call_args_list if c.args[0] == 'write']
     assert writes == [v['command'] for v in vectors]
-    assert not gateway._pending_floor_commands

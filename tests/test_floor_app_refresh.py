@@ -12,7 +12,7 @@ from salus_it600.comfort_warm_floor import (
 from salus_it600.exceptions import IT600ValidationError
 from salus_it600.parsers.climate import parse_climate_device
 from tests.test_comfort_warm_floor import replace_blob, setup_gateway, status_fixture
-from tests.test_floor_beta import confirmed, envelope
+from tests.test_floor_command_lifecycle import confirmed, envelope
 
 
 async def test_app_change_stays_readable_while_pending_and_never_allows_second_write():

@@ -1,86 +1,41 @@
-# Experimental Comfort Warm Floor writes
+# Experimental Comfort Warm Floor control
 
-Unreleased contribution, for SQ610RFNH firmware `00000054` only.
-Use `IT600Gateway.set_climate_device_comfort_warm_floor(device_id, level)`;
-levels are Off (0), 1, 2 and 3.
+Only the SQ610RFNH / firmware 00000054 heating/wiring-centre profile is enabled.
+Call set_climate_device_comfort_warm_floor(device_id, level) for Off (0), 1, 2, 3.
+The method reads fresh settings and returns after gateway acknowledgement.
+Acknowledgement is not device confirmation: normal polling supplies the actual
+comfort level. No confirmation loop or durable journal is part of this client.
 
-## Hardware evidence and the counter correction
+## Encoding and evidence
 
-On 2026-10-25, commands transmitting counter values 254, 255 and 0 were echoed
-and applied the requested comfort levels, while read-back counters advanced
-normally instead of taking the transmitted values. This did not force the
-device's stored counter to 254 or exercise its actual rollover.
+B11 uses sIT600I.SetCommand_d with prefix 423131 and a 60-byte body. Copy the
+fresh settings body, change marker 72 to 73 and comfort byte 39 only. Preserve
+all other bytes, including opaque device-maintained metadata at 1, 40 and 41.
+Do not calculate a counter or PIN encoding, reset metadata, replay a failed
+transport request or restore an old snapshot.
 
-A subsequent two-write test changed only comfort: Off → 1 → Off. Outgoing
-counter bytes were copied unchanged (40, then 41); read-back counters became
-41 and 42. Bytes 40–41 were also copied unchanged in each outgoing command.
-Complete settings, weekly schedules, mode, setpoints and keypad lock were
-checked. Both changes and the final Off state were confirmed by fresh reads.
-The two anonymized vectors are in
-`tests/fixtures/comfort_warm_floor_level_only.json`.
+Two anonymized comfort-only hardware captures confirm Off -> 1 -> Off with
+unchanged outgoing metadata and the expected device read-back. The earlier
+75-write trial used the older incrementing encoder: its fixtures provide
+historical protected-settings evidence, not 75 comfort-only writes. Actual
+stored-counter rollover and other firmware/PIN profiles remain unobserved.
 
-The old encoder incorrectly incremented byte 1, calculated bytes 40–41 and
-predicted an identical read-back. This version treats all three as opaque,
-device-maintained metadata. No counter is incremented, reset, wrapped or
-re-encoded by the client, and there is no artificial write cutoff at 255.
-**Actual device-counter rollover has not been observed on hardware.** Simulated
-255→0 tests verify that client arithmetic and comparisons do not block it;
-they cannot prove what every firmware reports at that boundary.
+## Readiness and bounded pending commands
 
-The earlier 75-write trial covered all 12 level transitions on three devices,
-using the old incrementing strategy. Its vectors remain regression inputs for
-preserving other settings, not evidence of 75 comfort-only writes. Supported
-models and firmware have not been broadened by this change.
+Fresh identity, availability, model/firmware, layout, heating/wiring-centre and
+PIN/profile guards run before writing. A recognized shared B34L response needs
+two stable fresh reads, two seconds apart. Unknown external command framing
+and changed settings block dispatch.
 
-## Write frame and guards
+Local pending writes resolve from the comfort byte and settings body actually
+written by B11. Live HVAC setpoints/hold fields and later command echoes do not
+have to equal their old values. Pending commands expire lazily after 120 seconds,
+so an unapplied or lost write cannot permanently block later explicit requests.
+Expiry does not resend the old command. A known expired local echo requires two
+stable fresh reads before a new requested level is encoded from current data.
+An unknown external echo does not get that exception. Transport disconnects
+never replay the B11 write (retry_disconnect=False).
 
-Each command uses `sIT600I.SetCommand_d` in the normal `requestAttr: write`
-envelope, with prefix `423131` (B11) and a 60-byte body. Copy the selected
-thermostat's fresh settings, change body marker 72 to 73, and set byte 39 to
-the requested comfort level. Every other body byte, including 1, 40 and 41,
-is copied unchanged. Preserve the thermostat's own footer and language; never
-use the original proposal's fixed footer. The trailing `00` in a command echo
-is response status and is not sent in the command.
-
-Guards remain for device identity, endpoint 9/type 100, online state, heating
-mode, paired wiring centre, no TRVs, no PIN-required flag, recognized 77-byte
-settings layout and tail, and matching Schedule/Status_2_d aliases. Unknown
-profiles, partial data and unrecognized command framing block writes.
-The separate PIN-required flag is checked; counter metadata is never guessed
-from an assumed PIN/counter formula.
-
-## Confirmation, pending commands and failures
-
-Gateway acceptance is not device confirmation. With `confirmation_timeout`
-enabled, the client waits for the requested level, the complete protected
-settings and weekly schedules, plus an exact successful command echo or the
-specifically observed B34L shared response (`4233344c`). Metadata bytes may
-change independently; every other setting must match the pre-write snapshot.
-An unexpected level or unrelated setting change stops confirmation.
-
-A same-counter echo carrying a different configuration blocks a new write as
-pending. Counter values are not numerically ordered to infer pending state:
-the device's read-back counter is independently maintained. Unconfirmed local
-commands remain remembered and block further dispatch until their actual
-result matches. For B34L, two unchanged fresh snapshots two seconds apart are
-required before dispatch. Unknown shared-response markers remain blocked.
-External writers have no compare-and-swap protection: do not edit the same
-thermostat concurrently in the app while testing or writing locally.
-
-The caller's `before_write` backup is awaited before dispatch. Backup failure
-prevents the write. Writes are never automatically retried after disconnect;
-lost replies trigger reads, not replay. The HA integration retains durable
-pre-write backups and uncertainty across restarts. An error never blindly
-replays an old backup or overwrites an unrelated change. Restoration means
-changing the comfort level against a fresh validated snapshot.
-
-Known reported levels remain readable during pending app changes or missing
-command echoes; write readiness is checked separately. A real offline or
-unsupported device remains unavailable.
-
-## Distribution and limits
-
-The matching HA beta pins a SHA-256-verified pure-Python wheel from this fork's
-GitHub prerelease. No PyPI publishing is performed. This is still a guarded,
-firmware-specific beta. Other firmware, PIN-required installations and real
-device-counter rollover require additional evidence.
+The public comfort_command_matches helper checks that controlled body; it is
+not a general transactional guarantee against an app editing settings later.
+All protocol tests are simulated except the documented anonymized captures.

@@ -2,20 +2,13 @@
 
 ## Unreleased
 
-- Add guarded Comfort Warm Floor read/write support for the verified
-  SQ610RFNH firmware 00000054 profile (Off/1/2/3).
-- Copy device-owned metadata unchanged; alter only the comfort setting in
-  the settings body. No guessed counter arithmetic or artificial 255 cutoff.
-- Require fresh state, an awaited pre-write backup when configured, protected
-  settings validation and confirmed read-back; never replay uncertain writes.
-- Handle the observed shared B34L response using two stable fresh reads.
-  Separate profile support from temporary write readiness so pending app
-  commands do not make the reported floor-comfort entity unavailable.
-- Validate finite numeric inputs and rounded setpoint bounds; decode a complete
-  Schedule alias when Status_2_d is incomplete and compare hex case-insensitively.
-- Include anonymized hardware fixtures: 75 older-encoder changes and two
-  comfort-only changes. Actual device-counter rollover remains unobserved.
-  See docs/comfort-warm-floor-write.md for protocol evidence and limits.
+- Add experimental, profile-gated SQ610RFNH/00000054 Comfort Warm Floor control.
+  Preserve device-owned metadata, read fresh state and never replay B11 writes.
+- Return on gateway acknowledgement; normal polling provides device confirmation.
+  Resolve local pending writes from the controlled settings body and bound them
+  to 120 seconds. Schedule changes and overwritten echoes do not trap commands.
+- Include anonymized 75-write historical and two comfort-only hardware fixtures;
+  actual stored-counter rollover remains unobserved.
 
 ## 0.7.0 - 2026-10-26
 

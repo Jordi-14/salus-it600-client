@@ -35,10 +35,10 @@ Deliberately not decoded:
 - Bytes 44 and 48-76 are outside the confirmed settings table (a gap byte,
   then the schedule/holiday-hold payload region and `ff` padding).
 
-This decoder remains read-only. A separate, restricted Comfort Warm Floor
-encoder exists in `comfort_warm_floor.py` for one hardware-verified profile.
-It is not a general settings encoder: save counters, PIN variants and other
-firmware layouts remain unverified outside the documented captures.
+This module is read-only by design. No write/encode path is implemented:
+the save-counter and PIN-obfuscation interactions with writes are not fully
+understood, and a subtly wrong write could corrupt a live thermostat's
+settings.
 """
 
 from __future__ import annotations
@@ -121,18 +121,12 @@ def parse_advanced_settings(th: dict[str, Any]) -> ThermostatAdvancedSettings | 
     the wire; `Status_2_d` is preferred because the legacy `Schedule` name
     misdescribes the contents.
     """
-    # A present but empty/truncated preferred alias must not hide a valid
-    # legacy alias. This read fallback does not relax the writer's requirement
-    # that both aliases agree before modifying a setting.
-    blob = None
-    for candidate in (th.get("Status_2_d"), th.get("Schedule")):
-        if (
-            isinstance(candidate, str) and len(candidate) == ADVANCED_SETTINGS_HEX_LENGTH
-            and candidate.startswith(ADVANCED_SETTINGS_HEADER)
-        ):
-            blob = candidate
-            break
-    if blob is None:
+    blob = th.get("Status_2_d")
+    if not isinstance(blob, str):
+        blob = th.get("Schedule")
+    if not isinstance(blob, str) or len(blob) != ADVANCED_SETTINGS_HEX_LENGTH:
+        return None
+    if not blob.startswith(ADVANCED_SETTINGS_HEADER):
         return None
 
     # Byte offsets follow the table in the module docstring and
