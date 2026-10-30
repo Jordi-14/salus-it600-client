@@ -652,6 +652,40 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
                 )
                 sleep.assert_awaited_once()
 
+    async def test_set_mini_trv_mode_only_warns_when_status_request_fails(self):
+        for error in (TimeoutError(), client_exceptions.ClientError()):
+            with self.subTest(type(error).__name__):
+                session = FakeSession(
+                    {"status": "success", "id": [{"status": "success"}]},
+                    error_sequence=[None, error],
+                )
+                gateway = make_gateway(session)
+                gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+                with (
+                    patch("salus_it600.gateway.asyncio.sleep", new=AsyncMock()),
+                    self.assertLogs("salus_it600", level="WARNING") as logs,
+                ):
+                    await gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON)
+
+                self.assertEqual(2, len(session.post_calls))
+                self.assertIn("MANUAL_ON", logs.output[0])
+                self.assertIn("trv-1", logs.output[0])
+
+    async def test_set_mini_trv_mode_raises_when_mode_command_fails(self):
+        session = FakeSession(error=TimeoutError())
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+        with (
+            patch("salus_it600.gateway.asyncio.sleep", new=AsyncMock()) as sleep,
+            self.assertRaises(IT600ConnectionError),
+        ):
+            await gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON)
+
+        self.assertEqual(1, len(session.post_calls))
+        sleep.assert_not_awaited()
+
     async def test_set_mini_trv_mode_accepts_plain_int(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
         gateway = make_gateway(session)

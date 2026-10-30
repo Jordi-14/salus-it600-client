@@ -1492,9 +1492,19 @@ class IT600Gateway:
             device, {"sIT600I": {"SetCommand_d": _MINI_TRV_MODE_COMMANDS[mode]}}
         )
         await asyncio.sleep(_MINI_TRV_STATUS_REQUEST_DELAY)
-        await self._write_device(
-            device, {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}}
-        )
+        # The mode command has already been sent, and the TRV reports its new mode
+        # without this request, so failing here would misreport the change.
+        try:
+            await self._write_device(
+                device, {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}}
+            )
+        except (IT600CommandError, IT600ConnectionError) as err:
+            _LOGGER.warning(
+                "Sent mode %s to it600MINITRV %s, but its status request failed: %s",
+                mode.name,
+                device_id,
+                err,
+            )
 
     async def set_climate_device_temperature(
         self, device_id: str, setpoint_celsius: float
