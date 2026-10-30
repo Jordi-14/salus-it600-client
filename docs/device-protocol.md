@@ -241,17 +241,15 @@ ASCII text. `set_mini_trv_mode()` sends the same commands as the vendor app:
 | `MiniTrvMode.MANUAL_ON` | `42 33 38 37` | `B387` |
 | `MiniTrvMode.MANUAL_OFF` | `42 33 38 38` | `B388` |
 
-The gateway does not update `sIT600I.Mode` from the command alone. After a mode
-change the vendor app asks the TRV for a status report, and the client does the
-same: it waits 2 seconds and then writes
-`42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight zero bytes, `x`). The new
-mode shows on a later poll.
+After a mode change the vendor app waits 4 seconds and then asks the TRV for a
+status report by writing `42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight
+zero bytes, `x`). This client does the same with a 2 second wait, which still worked in testing.
 
-A full valve stroke takes about 50-55 seconds. In testing, an unpaired TRV
-reported position changes during the move when asked every 15 seconds. A paired
-TRV only sent a new report after each move had finished, about 40-50 seconds
-after the command. That is from one unit of each, and the paired TRV may ignore
-the status request or simply report less often.
+Note: If users report issues with commands getting dropped/lost in future, consider upping request delay back up to 4 seconds, same as the vendor app.
+
+In tests, writing the status request with no pause dropped the mode command.
+This suggests `SetCommand_d` holds one command per device, with the last write
+winning, so any two writes to the same TRV need a gap between them.
 
 The gateway accepts any `SetCommand_d` string, so a wrong command fails
 silently. Only the three modes above are accepted; fail-safe and adaptation

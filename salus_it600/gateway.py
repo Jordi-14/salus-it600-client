@@ -94,9 +94,10 @@ _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 _SQ610_WRITE_LOCK_KEY = "SetLockKey"
 # it600MINITRV commands are raw strings written to `sIT600I.SetCommand_d`, as
 # space-separated hex bytes. These are the ones the vendor app sends. After a
-# mode change the app asks the TRV for a status report (`B37`), which updates
-# the gateway's `sIT600I.Mode`; this client does the same. The gateway accepts
-# any SetCommand_d string, so a wrong command fails silently.
+# mode change the app waits 4 seconds and asks the TRV for a status report
+# (`B37`); this client does the same after 2 seconds. The wait matters: a request
+# written straight after the command cancels it. The gateway accepts any
+# SetCommand_d string, so a wrong command fails silently.
 _MINI_TRV_MODE_COMMANDS = {
     MiniTrvMode.AUTO: "42 33 38 31",
     MiniTrvMode.MANUAL_ON: "42 33 38 37",
