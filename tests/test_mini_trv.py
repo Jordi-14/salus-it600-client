@@ -133,11 +133,33 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
             "odd-length hex": _hex(SAMPLE_HEATING)[:-1],
             "non-ascii bytes": "FF" + _hex(SAMPLE_HEATING),
             "no separator": _hex(SAMPLE_HEATING.replace("@", "#")),
-            "too few digits": _hex("B37A1B2.18202025@3202"),
-            "zero trv temperature": _hex("B37A1B2.182000001850@3202"),
-            "implausible trv temperature": _hex("B37A1B2.182075001850@3202"),
-            "unpaired without repeat": _hex("B37FFFF.24074241824191500022"),
-            "unpaired only zeros repeat": _hex("B37FFFF0000000000000000.1500"),
+            "non-digit thermostat temperature": _hex(
+                SAMPLE_HEATING.replace("182020251850", "18x020251850")
+            ),
+            "non-digit trv temperature": _hex(
+                SAMPLE_HEATING.replace("182020251850", "182020x51850")
+            ),
+            "non-digit setpoint": _hex(
+                SAMPLE_HEATING.replace("182020251850", "1820202518x0")
+            ),
+            "zero trv temperature": _hex(
+                SAMPLE_HEATING.replace("182020251850", "182000001850")
+            ),
+            "implausible trv temperature": _hex(
+                SAMPLE_HEATING.replace("182020251850", "182075001850")
+            ),
+            "unpaired non-digit reading": _hex(
+                SAMPLE_UNPAIRED.replace("24182418", "24x824x8")
+            ),
+            "unpaired without repeat": _hex(
+                SAMPLE_UNPAIRED.replace("24182418", "24182419")
+            ),
+            "unpaired only zeros repeat": _hex(
+                SAMPLE_UNPAIRED.replace("24182418", "00000000")
+            ),
+            "unpaired implausible reading": _hex(
+                SAMPLE_UNPAIRED.replace("24182418", "75007500")
+            ),
         }
         for label, value in cases.items():
             with self.subTest(label):
