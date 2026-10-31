@@ -47,10 +47,16 @@ group of digits, is rejected rather than searched for a reading.
 
 from __future__ import annotations
 
+import logging
 import string
 from typing import Any, NamedTuple
 
 from ..const import TEMPERATURE_SCALE
+
+_LOGGER = logging.getLogger("salus_it600")
+
+# An undecodable report can repeat on every poll; warn once, then log at debug.
+_UNDECODABLE_REPORT_WARNED = False
 
 # Fields shared by both layouts, as positions in the decoded string.
 _RESPONSE_ID = "B37"
@@ -174,6 +180,16 @@ def decode_mini_trv_report(value: Any) -> MiniTrvReport | None:
         text = bytes.fromhex(value).decode("ascii")
     except ValueError:
         # Covers both invalid hex and UnicodeDecodeError.
+        global _UNDECODABLE_REPORT_WARNED
+        if _UNDECODABLE_REPORT_WARNED:
+            _LOGGER.debug("Ignoring undecodable it600MINITRV report: %r", value)
+        else:
+            _UNDECODABLE_REPORT_WARNED = True
+            _LOGGER.warning(
+                "Ignoring undecodable it600MINITRV report: %r; repeats are logged at "
+                "debug level",
+                value,
+            )
         return None
 
     separator_index = text.find(_SEPARATOR)

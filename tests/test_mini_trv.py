@@ -7,6 +7,7 @@ import json
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from salus_it600.gateway import IT600Gateway
 from salus_it600.parsers import (
@@ -204,6 +205,29 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
         }
         for label, text in cases.items():
             with self.subTest(label):
+                self.assertIsNone(decode_mini_trv_report(_hex(text)))
+
+    def test_undecodable_report_warns_once(self) -> None:
+        for label, value in {
+            "not hex": "zz" + _hex(SAMPLE_HEATING),
+            "non-ascii bytes": "FF" + _hex(SAMPLE_HEATING),
+        }.items():
+            with (
+                self.subTest(label),
+                patch("salus_it600.parsers.mini_trv._UNDECODABLE_REPORT_WARNED", False),
+            ):
+                with self.assertLogs("salus_it600", level="DEBUG") as first:
+                    self.assertIsNone(decode_mini_trv_report(value))
+                with self.assertLogs("salus_it600", level="DEBUG") as second:
+                    self.assertIsNone(decode_mini_trv_report(value))
+
+                self.assertEqual(["WARNING"], [r.levelname for r in first.records])
+                self.assertIn(value, first.output[0])
+                self.assertEqual(["DEBUG"], [r.levelname for r in second.records])
+
+    def test_unrecognised_layouts_do_not_log(self) -> None:
+        for text in ("B381", "B70" + SAMPLE_HEATING[3:]):
+            with self.subTest(text), self.assertNoLogs("salus_it600", level="DEBUG"):
                 self.assertIsNone(decode_mini_trv_report(_hex(text)))
 
     def test_rejects_unrelated_responses_with_plausible_digits(self) -> None:
