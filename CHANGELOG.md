@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Reject non-finite numeric values and revalidate temperature limits after half-degree rounding.
+
 ## 0.7.0 - 2026-10-26
 
 - Promote the tested 0.7.0b1 beta to stable with no runtime changes.

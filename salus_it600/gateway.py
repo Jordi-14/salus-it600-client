@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Self, TypeVar
 
@@ -155,8 +156,8 @@ def _validate_positive_number(value: float, field_name: str) -> int | float:
     """Validate a positive numeric argument."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{field_name} must be a number")
-    if value <= 0:
-        raise IT600ValidationError(f"{field_name} must be greater than 0")
+    if not math.isfinite(value) or value <= 0:
+        raise IT600ValidationError(f"{field_name} must be a finite number greater than 0")
     return value
 
 
@@ -202,6 +203,8 @@ def _validate_setpoint(
         raise TypeError("setpoint_celsius must be a number")
 
     setpoint = float(value)
+    if not all(math.isfinite(item) for item in (setpoint, min_temp, max_temp)) or min_temp > max_temp:
+        raise IT600ValidationError("setpoint and temperature bounds must be finite and ordered")
     if setpoint < min_temp or setpoint > max_temp:
         raise IT600ValidationError(f"setpoint_celsius must be between {min_temp} and {max_temp}")
     return setpoint
@@ -1424,7 +1427,16 @@ class IT600Gateway:
             min_temp,
             max_temp,
         )
-        rounded_setpoint = int(self.round_to_half(setpoint_celsius) * TEMPERATURE_SCALE)
+        rounded_celsius = self.round_to_half(setpoint_celsius)
+        try:
+            _validate_setpoint(rounded_celsius, min_temp, max_temp)
+        except IT600ValidationError as err:
+            raise IT600ValidationError(
+                f"Rounded setpoint {rounded_celsius} °C from requested "
+                f"{setpoint_celsius} °C is outside the device range "
+                f"{min_temp} to {max_temp} °C"
+            ) from err
+        rounded_setpoint = int(rounded_celsius * TEMPERATURE_SCALE)
         request_data: dict[str, dict[str, int]]
         is_cooling = _uses_cooling_setpoint(device)
 
