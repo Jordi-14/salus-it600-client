@@ -121,8 +121,8 @@ def parse_advanced_settings(th: dict[str, Any]) -> ThermostatAdvancedSettings | 
     the wire; `Status_2_d` is preferred because the legacy `Schedule` name
     misdescribes the contents.
     """
-    # A present but empty/truncated preferred alias must not hide a valid
-    # legacy alias. This read fallback does not relax the writer's requirement
+    # Defensive: empty/truncated Status_2_d was not observed on hardware.
+    # Such a preferred alias must not hide a valid legacy alias. This read fallback does not relax the writer's requirement
     # that both aliases agree before modifying a setting.
     blob = None
     for candidate in (th.get("Status_2_d"), th.get("Schedule")):
