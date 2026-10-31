@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add experimental, profile-gated SQ610RFNH/00000054 Comfort Warm Floor control.
+  Preserve device-owned metadata, read fresh state and never replay B11 writes.
+- Return on gateway acknowledgement; normal polling provides device confirmation.
+  Resolve local pending writes from the controlled settings body and bound them
+  to 120 seconds. Schedule changes and overwritten echoes do not trap commands.
+- Include anonymized 75-write historical and two comfort-only hardware fixtures;
+  actual stored-counter rollover remains unobserved.
+
 ## 0.7.0 - 2026-10-26
 
 - Promote the tested 0.7.0b1 beta to stable with no runtime changes.
