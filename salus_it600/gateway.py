@@ -1280,7 +1280,9 @@ class IT600Gateway:
                 elif self._comfort_floor_time() < expires_at:
                     raise IT600ValidationError("Previous floor-comfort command is still pending or uncertain")
                 else:
-                    del self._pending_floor_commands[device_id]
+                    # Expiry ends blocking, but keep the local identity until
+                    # recovery succeeds. A failed stability read must not turn
+                    # this known echo into an unknown external command.
                     expired_command = previous_command
             echo = comfort_command_response(status)
             # Only a known, expired local echo may bypass the in-flight echo
@@ -1298,6 +1300,7 @@ class IT600Gateway:
                 status = stable
             command = build_comfort_warm_floor_command(status, level, check_command=not stale_local_echo)
             if command is None:
+                self._pending_floor_commands.pop(device_id, None)
                 return
             self._pending_floor_commands[device_id] = (
                 command, self._comfort_floor_time() + COMFORT_PENDING_SECONDS,

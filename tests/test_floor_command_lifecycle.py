@@ -101,6 +101,49 @@ async def test_shared_echo_requires_stable_settings(monkeypatch):
     assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ["read", "read"]
 
 
+@pytest.mark.parametrize("new_level", [0, 1])
+async def test_expired_local_echo_survives_failed_stability_read(monkeypatch, new_level):
+    """Retain old local identity until a later explicit recovery completes."""
+    gateway, status = setup_gateway()
+    clock = [0]
+    monkeypatch.setattr(gateway, "_comfort_floor_time", lambda: clock[0])
+    monkeypatch.setattr("salus_it600.gateway.asyncio.sleep", AsyncMock())
+    original_command = build_comfort_warm_floor_command(status, 3)
+    gateway._make_encrypted_request = AsyncMock(
+        side_effect=[envelope(status), IT600ConnectionError("lost write reply")],
+    )
+    with pytest.raises(IT600ConnectionError, match="lost write reply"):
+        await gateway.set_climate_device_comfort_warm_floor("device-1", 3)
+    original_pending = gateway._pending_floor_commands["device-1"]
+    status["sIT600I"]["CommandResponse_d"] = original_command + "00"
+
+    clock[0] = COMFORT_PENDING_SECONDS
+    gateway._make_encrypted_request = AsyncMock(
+        side_effect=[envelope(status), IT600ConnectionError("stability read failed")],
+    )
+    with pytest.raises(IT600ConnectionError, match="stability read failed"):
+        await gateway.set_climate_device_comfort_warm_floor("device-1", new_level)
+    assert gateway._pending_floor_commands["device-1"] == original_pending
+    assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ["read", "read"]
+
+    clock[0] += 1000  # Keeping identity must not renew the old blocking deadline.
+    gateway._make_encrypted_request = AsyncMock(return_value=envelope(status))
+    await gateway.set_climate_device_comfort_warm_floor("device-1", new_level)
+    if new_level == 0:
+        assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ["read", "read"]
+        assert "device-1" not in gateway._pending_floor_commands
+        return
+    assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ["read", "read", "write"]
+    request = gateway._make_encrypted_request.call_args_list[-1]
+    command = request.args[1]["id"][0]["sIT600I"]["SetCommand_d"]
+    assert command == build_comfort_warm_floor_command(status, 1, check_command=False)
+    assert command != original_command
+    assert request.kwargs["retry_disconnect"] is False
+    assert gateway._pending_floor_commands["device-1"] == (
+        command, clock[0] + COMFORT_PENDING_SECONDS,
+    )
+
+
 def test_matching_ignores_echo_but_not_the_written_settings():
     status = status_fixture()
     command = build_comfort_warm_floor_command(status, 1)
