@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Decode a complete Schedule alias when Status_2_d is present but incomplete.
+
 ## 0.7.0 - 2026-10-26
 
 - Promote the tested 0.7.0b1 beta to stable with no runtime changes.
