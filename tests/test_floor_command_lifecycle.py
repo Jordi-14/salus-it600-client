@@ -131,8 +131,11 @@ async def test_expired_local_echo_survives_failed_stability_read(monkeypatch, ne
     await gateway.set_climate_device_comfort_warm_floor("device-1", new_level)
     if new_level == 0:
         assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ["read", "read"]
-        assert "device-1" not in gateway._pending_floor_commands
-        return
+        # A no-op does not replace the old echo. Keep recognizing it when a
+        # later explicit request actually changes the level.
+        assert gateway._pending_floor_commands["device-1"] == original_pending
+        gateway._make_encrypted_request.reset_mock()
+        await gateway.set_climate_device_comfort_warm_floor("device-1", 1)
     assert [c.args[0] for c in gateway._make_encrypted_request.call_args_list] == ["read", "read", "write"]
     request = gateway._make_encrypted_request.call_args_list[-1]
     command = request.args[1]["id"][0]["sIT600I"]["SetCommand_d"]

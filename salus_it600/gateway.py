@@ -1300,7 +1300,6 @@ class IT600Gateway:
                 status = stable
             command = build_comfort_warm_floor_command(status, level, check_command=not stale_local_echo)
             if command is None:
-                self._pending_floor_commands.pop(device_id, None)
                 return
             self._pending_floor_commands[device_id] = (
                 command, self._comfort_floor_time() + COMFORT_PENDING_SECONDS,
