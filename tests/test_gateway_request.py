@@ -6,6 +6,7 @@ from dataclasses import replace
 from unittest.mock import AsyncMock
 
 from aiohttp import client_exceptions
+
 from salus_it600.const import (
     CURRENT_HVAC_IDLE,
     FAN_MODE_AUTO,
