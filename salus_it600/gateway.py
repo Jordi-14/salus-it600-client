@@ -10,6 +10,7 @@ import aiohttp
 from aiohttp import client_exceptions
 
 from .comfort_warm_floor import (
+    COMFORT_PENDING_SECONDS,
     NON_SETTINGS_RESPONSE,
     build_comfort_warm_floor_command,
     comfort_command_matches,
@@ -1298,7 +1299,9 @@ class IT600Gateway:
             command = build_comfort_warm_floor_command(status, level, check_command=not stale_local_echo)
             if command is None:
                 return
-            self._pending_floor_commands[device_id] = (command, self._comfort_floor_time() + 120)
+            self._pending_floor_commands[device_id] = (
+                command, self._comfort_floor_time() + COMFORT_PENDING_SECONDS,
+            )
             result = await self._make_encrypted_request(
                 "write", {"requestAttr": "write", "id": [
                     {"data": device.data, "sIT600I": {"SetCommand_d": command}},

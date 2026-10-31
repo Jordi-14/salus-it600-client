@@ -16,6 +16,7 @@ _HEX_SETTINGS = re.compile(r"72[0-9a-fA-F]{152}\Z")
 # Observed on two online devices after app-side changes. This is a different
 # command family, not a B11 settings acknowledgement. Its meaning is not assumed.
 NON_SETTINGS_RESPONSE = "4233344c"
+COMFORT_PENDING_SECONDS = 120.0
 
 
 _DEVICE_METADATA = frozenset((1, 40, 41))
@@ -25,6 +26,8 @@ def comfort_command_response(status: dict[str, Any]) -> str:
     """Return a normalized shared command response, including missing sections."""
     section = status.get("sIT600I")
     return str(section.get("CommandResponse_d", "")).lower() if isinstance(section, dict) else ""
+
+
 def validated_comfort_settings(
     status: dict[str, Any], *, check_command: bool = True,
 ) -> bytes:

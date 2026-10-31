@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from salus_it600.comfort_warm_floor import (
+    COMFORT_PENDING_SECONDS,
     NON_SETTINGS_RESPONSE,
     build_comfort_warm_floor_command,
     comfort_command_matches,
@@ -79,7 +80,7 @@ async def test_unapplied_write_expires_then_new_request_uses_fresh_body(monkeypa
     gateway._make_encrypted_request = AsyncMock(return_value=envelope(status))
     with pytest.raises(IT600ValidationError, match="still pending"):
         await gateway.set_climate_device_comfort_warm_floor("device-1", 1)
-    clock[0] = 121
+    clock[0] = COMFORT_PENDING_SECONDS
     monkeypatch.setattr("salus_it600.gateway.asyncio.sleep", AsyncMock())
     gateway._make_encrypted_request.reset_mock()
     await gateway.set_climate_device_comfort_warm_floor("device-1", 1)
