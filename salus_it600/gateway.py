@@ -157,7 +157,7 @@ def _validate_positive_number(value: float, field_name: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{field_name} must be a number")
     if not math.isfinite(value) or value <= 0:
-        raise IT600ValidationError(f"{field_name} must be greater than 0")
+        raise IT600ValidationError(f"{field_name} must be a finite number greater than 0")
     return value
 
 
@@ -1427,9 +1427,15 @@ class IT600Gateway:
             min_temp,
             max_temp,
         )
-        rounded_celsius = _validate_setpoint(
-            self.round_to_half(setpoint_celsius), min_temp, max_temp,
-        )
+        rounded_celsius = self.round_to_half(setpoint_celsius)
+        try:
+            _validate_setpoint(rounded_celsius, min_temp, max_temp)
+        except IT600ValidationError as err:
+            raise IT600ValidationError(
+                f"Rounded setpoint {rounded_celsius} °C from requested "
+                f"{setpoint_celsius} °C is outside the device range "
+                f"{min_temp} to {max_temp} °C"
+            ) from err
         rounded_setpoint = int(rounded_celsius * TEMPERATURE_SCALE)
         request_data: dict[str, dict[str, int]]
         is_cooling = _uses_cooling_setpoint(device)
