@@ -214,7 +214,7 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
         }.items():
             with (
                 self.subTest(label),
-                patch("salus_it600.parsers.mini_trv._UNDECODABLE_REPORT_WARNED", False),
+                patch("salus_it600.parsers.mini_trv._REPORT_FAILURES_WARNED", set()),
             ):
                 with self.assertLogs("salus_it600", level="DEBUG") as first:
                     self.assertIsNone(decode_mini_trv_report(value))
@@ -225,10 +225,65 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
                 self.assertIn(value, first.output[0])
                 self.assertEqual(["DEBUG"], [r.levelname for r in second.records])
 
-    def test_unrecognised_layouts_do_not_log(self) -> None:
-        for text in ("B381", "B70" + SAMPLE_HEATING[3:]):
+    def test_invalid_status_report_warns_once_per_layout(self) -> None:
+        with patch("salus_it600.parsers.mini_trv._REPORT_FAILURES_WARNED", set()):
+            for label, text in {
+                "invalid paired": SAMPLE_HEATING.replace(
+                    "182020251850", "182075001850"
+                ),
+                "invalid unpaired": SAMPLE_UNPAIRED.replace("24182418", "24182419"),
+            }.items():
+                with self.subTest(label):
+                    with self.assertLogs("salus_it600", level="DEBUG") as first:
+                        self.assertIsNone(decode_mini_trv_report(_hex(text)))
+                    with self.assertLogs("salus_it600", level="DEBUG") as second:
+                        self.assertIsNone(decode_mini_trv_report(_hex(text)))
+
+                    self.assertEqual(["WARNING"], [r.levelname for r in first.records])
+                    self.assertIn(label, first.output[0])
+                    self.assertEqual(["DEBUG"], [r.levelname for r in second.records])
+
+    def test_misplaced_separator_logs_its_own_kind(self) -> None:
+        with (
+            patch("salus_it600.parsers.mini_trv._REPORT_FAILURES_WARNED", set()),
+            self.assertLogs("salus_it600", level="WARNING") as logs,
+        ):
+            self.assertIsNone(decode_mini_trv_report(_hex("B37BAD@182020251850@")))
+
+        self.assertIn("misplaced separator", logs.output[0])
+
+    def test_valid_reports_do_not_log(self) -> None:
+        for text in (SAMPLE_IDLE, SAMPLE_HEATING, SAMPLE_UNPAIRED, SAMPLE_VENDOR):
             with self.subTest(text), self.assertNoLogs("salus_it600", level="DEBUG"):
+                self.assertIsNotNone(decode_mini_trv_report(_hex(text)))
+
+    def test_other_responses_log_only_at_debug(self) -> None:
+        for text in ("B381", "B70" + SAMPLE_HEATING[3:]):
+            with (
+                self.subTest(text),
+                self.assertLogs("salus_it600", level="DEBUG") as logs,
+            ):
                 self.assertIsNone(decode_mini_trv_report(_hex(text)))
+
+            self.assertEqual(["DEBUG"], [r.levelname for r in logs.records])
+            self.assertIn(_hex(text), logs.output[0])
+
+    def test_non_string_value_logs_as_undecodable(self) -> None:
+        for value in (1234, 0, False, ["B37"]):
+            with (
+                self.subTest(value),
+                patch("salus_it600.parsers.mini_trv._REPORT_FAILURES_WARNED", set()),
+                self.assertLogs("salus_it600", level="WARNING") as logs,
+            ):
+                self.assertIsNone(decode_mini_trv_report(value))
+
+            self.assertIn("undecodable", logs.output[0])
+            self.assertIn(str(value), logs.output[0])
+
+    def test_missing_or_empty_value_does_not_log(self) -> None:
+        for value in (None, ""):
+            with self.subTest(value), self.assertNoLogs("salus_it600", level="DEBUG"):
+                self.assertIsNone(decode_mini_trv_report(value))
 
     def test_rejects_unrelated_responses_with_plausible_digits(self) -> None:
         cases = {

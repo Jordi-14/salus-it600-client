@@ -55,8 +55,8 @@ from ..const import TEMPERATURE_SCALE
 
 _LOGGER = logging.getLogger("salus_it600")
 
-# An undecodable report can repeat on every poll; warn once, then log at debug.
-_UNDECODABLE_REPORT_WARNED = False
+# A bad report can repeat on every poll; warn once per kind, then log at debug.
+_REPORT_FAILURES_WARNED: set[str] = set()
 
 # Fields shared by both layouts, as positions in the decoded string.
 _RESPONSE_ID = "B37"
@@ -99,6 +99,19 @@ class MiniTrvReport(NamedTuple):
 
 def _plausible(temperature: float) -> bool:
     return _MIN_TRV_TEMPERATURE < temperature <= _MAX_TRV_TEMPERATURE
+
+
+def _log_report_failure(kind: str, value: str) -> None:
+    """Log a report that could not be used, at warning level once per kind."""
+    if kind in _REPORT_FAILURES_WARNED:
+        _LOGGER.debug("Ignoring %s it600MINITRV report: %r", kind, value)
+    else:
+        _REPORT_FAILURES_WARNED.add(kind)
+        _LOGGER.warning(
+            "Ignoring %s it600MINITRV report: %r; repeats are logged at debug level",
+            kind,
+            value,
+        )
 
 
 def _is_hex(text: str) -> bool:
@@ -173,28 +186,35 @@ def decode_mini_trv_report(value: Any) -> MiniTrvReport | None:
     have the full paired (first `@` at index 40) or unpaired (no `@`) layout, or
     holds an implausible TRV temperature.
     """
-    if not isinstance(value, str) or not value:
+    if value is None or value == "":
+        return None
+
+    if not isinstance(value, str):
+        _log_report_failure("undecodable", str(value))
         return None
 
     try:
         text = bytes.fromhex(value).decode("ascii")
     except ValueError:
         # Covers both invalid hex and UnicodeDecodeError.
-        global _UNDECODABLE_REPORT_WARNED
-        if _UNDECODABLE_REPORT_WARNED:
-            _LOGGER.debug("Ignoring undecodable it600MINITRV report: %r", value)
-        else:
-            _UNDECODABLE_REPORT_WARNED = True
-            _LOGGER.warning(
-                "Ignoring undecodable it600MINITRV report: %r; repeats are logged at "
-                "debug level",
-                value,
-            )
+        _log_report_failure("undecodable", value)
         return None
 
     separator_index = text.find(_SEPARATOR)
-    if separator_index == _SEPARATOR_INDEX:
-        return _decode_paired(text)
     if separator_index == -1:
-        return _decode_unpaired(text)
-    return None
+        kind = "invalid unpaired"
+        report = _decode_unpaired(text)
+    elif separator_index == _SEPARATOR_INDEX:
+        kind = "invalid paired"
+        report = _decode_paired(text)
+    else:
+        kind = "misplaced separator"
+        report = None
+
+    # Other responses share this field, so only a status report is a failure.
+    if report is None:
+        if text.startswith(_RESPONSE_ID):
+            _log_report_failure(kind, value)
+        else:
+            _LOGGER.debug("Ignoring non-status it600MINITRV response: %r", value)
+    return report
