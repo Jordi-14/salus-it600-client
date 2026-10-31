@@ -96,6 +96,30 @@ def _device_name(device_status: dict[str, Any], unique_id: str | None) -> str:
         return default_name
 
 
+def device_short_id(device_status: dict[str, Any]) -> int | None:
+    """Return the device's ZigBee short address, if the payload carries one.
+
+    The gateway reports it as `sZDO.ShortID_d`, and repeats it inside the
+    `sZDO.DeviceName` JSON string. Other devices refer to their pairing
+    partner by this value (for example `sIT600I.PairedThermostatShortID` on
+    an it600MINITRV).
+    """
+    szdo = device_status.get("sZDO")
+    if not isinstance(szdo, dict):
+        return None
+
+    short_id = szdo.get("ShortID_d")
+    if short_id is None:
+        try:
+            short_id = json.loads(szdo.get("DeviceName", "")).get("ShortID_d")
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    if isinstance(short_id, bool) or not isinstance(short_id, int):
+        return None
+    return short_id
+
+
 def _hold_type(payload: dict[str, Any], unique_id: str) -> int:
     """Return HoldType, defaulting broken payloads to permanent hold."""
     if "HoldType" not in payload and unique_id not in _MISSING_HOLD_TYPE_WARNED:

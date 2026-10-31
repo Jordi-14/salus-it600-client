@@ -96,6 +96,19 @@ class FanMode(IntEnum):
     AUTO = 5
 
 
+class MiniTrvMode(IntEnum):
+    """it600MINITRV operating modes reported in `sIT600I.Mode`.
+
+    These are the modes the vendor app can set. The app also labels reported
+    values 3 (fail-safe) and 4 (adaptation), which are states the TRV enters
+    on its own.
+    """
+
+    AUTO = 0
+    MANUAL_ON = 1
+    MANUAL_OFF = 2
+
+
 class ControlAlgorithm(IntEnum):
     """SQ610 heating control-algorithm values from the advanced-settings blob.
 
@@ -265,3 +278,15 @@ THERMOSTAT_ERROR_CODES: dict[str, str] = {
 }
 
 BATTERY_ERROR_CODES: frozenset[str] = frozenset({"Error22", "Error32"})
+
+# Fault flags the it600MINITRV reports about itself in `sIT600I`. They are the
+# TRV's own view of the paired-thermostat registers above (`Error01`,
+# `Error23`, `Error30`, `Error31`), so the descriptions match those entries
+# without the "Paired TRV" prefix. `TRVError22` (low battery) is left out: it
+# already has its own low-battery binary sensor.
+MINI_TRV_ERROR_CODES: dict[str, str] = {
+    "TRVError01": "Hardware issue",
+    "TRVError23": "Message from unpaired TRV",
+    "TRVError30": "Gear issue",
+    "TRVError31": "Adaptation issue",
+}

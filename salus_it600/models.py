@@ -400,6 +400,7 @@ class BinarySensorDevice(NamedTuple):
     parent_unique_id: str | None = None
     entity_category: str | None = None
     extra_state_attributes: dict[str, Any] | None = None
+    mini_trv_mode: int | None = None
 
 
 class SwitchDevice(NamedTuple):
