@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0b1 - 2026-11-01
 
 - Decode a complete Schedule alias when Status_2_d is present but incomplete.
 - Reject non-finite numeric values and revalidate temperature limits after half-degree rounding.
