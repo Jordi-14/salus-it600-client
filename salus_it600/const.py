@@ -148,8 +148,8 @@ class RelayContactType(IntEnum):
 class ComfortWarmFloorLevel(IntEnum):
     """SQ610 Comfort Warm Floor level values.
 
-    LEVEL_3 comes from the vendor app's option list; unlike the other levels
-    it was not independently confirmed by live A/B toggling.
+    LEVEL_3 has been confirmed in a SQ610RFNH/00000054 hardware write trial,
+    including gateway read-back and confirmation in the vendor app.
     """
 
     DISABLED = 0

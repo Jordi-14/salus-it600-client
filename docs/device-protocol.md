@@ -117,7 +117,7 @@ fields checked by hand.
 | 35-36 | Min Off Time for Cooling | Decimal seconds |
 | 37 | Optimum Start | `00` off, `01` on |
 | 38 | Optimum Stop | `00` off, `01` on |
-| 39 | Comfort Warm Floor | `ComfortWarmFloorLevel` (Level 3 from the app's option list, not live-confirmed) |
+| 39 | Comfort Warm Floor | `ComfortWarmFloorLevel` (Level 3 now confirmed on SQ610RFNH/00000054) |
 | 42 | Language | Raw index into the app's language list (0 = English and 1 = Dansk observed; full list unconfirmed) |
 | 43 | Unlock Thermostat Keys | `00` PIN not required, `01` PIN required |
 | 45 | Display Floor Temperature on LCD | `00` hide, `01` show |
@@ -134,10 +134,10 @@ Deliberately not decoded:
   not decoded or exposed.
 - **Bytes 44 and 48-76** are outside the confirmed settings table (a gap
   byte, then the schedule/holiday-hold payload region and `ff` padding).
-- **Writes.** The decode is read-only; no encode path is implemented. The
-  save-counter and PIN-obfuscation interactions with writes are not fully
-  understood, and a subtly wrong write could corrupt a live thermostat's
-  settings.
+- **Writes.** The decoder remains read-only. A narrow experimental
+  [Comfort Warm Floor setter](comfort-warm-floor-write.md) is available for
+  one verified profile; this is not a general settings or PIN encoder.
+  Other counter/PIN variants remain unverified.
 
 ### FC600
 

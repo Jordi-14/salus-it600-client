@@ -9,6 +9,14 @@ from typing import Any, Self, TypeVar
 import aiohttp
 from aiohttp import client_exceptions
 
+from .comfort_warm_floor import (
+    COMFORT_PENDING_SECONDS,
+    NON_SETTINGS_RESPONSE,
+    build_comfort_warm_floor_command,
+    comfort_command_matches,
+    comfort_command_response,
+    validated_comfort_settings,
+)
 from .const import (
     COVER_POSITION_MAX,
     COVER_POSITION_MIN,
@@ -90,7 +98,8 @@ _SQ610_WRITE_SYSTEM_MODE = "SetSystemMode"
 _SQ610_WRITE_LOCK_KEY = "SetLockKey"
 # The gateway drops idle keep-alive connections without telling the client, so
 # the next request on a reused connection fails with ServerDisconnectedError.
-# One retry opens a fresh connection; reads and writes are both safe to resend.
+# One retry opens a fresh connection for ordinary requests. Sequenced settings
+# commands explicitly disable replay because their outcome can be uncertain.
 _DISCONNECT_RETRY_ATTEMPTS = 2
 _DISCONNECT_RETRY_DELAY = 0.2
 # Consecutive connection failures on the combined detail request before the
@@ -444,6 +453,8 @@ class IT600Gateway:
         self._disconnect_retry_delay = _DISCONNECT_RETRY_DELAY
         self._debug = debug
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
+        self._comfort_floor_lock = asyncio.Lock()
+        self._pending_floor_commands: dict[str, tuple[str, float]] = {}
 
         self._session = session
         self._close_session = False
@@ -1228,6 +1239,82 @@ class IT600Gateway:
 
         return raw_properties
 
+    def _comfort_floor_time(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    async def _read_comfort_status(self, device: ClimateDevice) -> dict[str, Any]:
+        """Read one fresh matching online device; never replay a settings write."""
+        response = await self._make_encrypted_request(
+            "read", {"requestAttr": "deviceid", "id": [{"data": device.data}]},
+        )
+        matches = [item for item in _response_items(response, "floor-comfort detail")
+                   if item.get("data") == device.data and item.get("status") == "success"]
+        if len(matches) != 1:
+            raise IT600CommandError("Expected one successful floor-comfort device response")
+        status = matches[0]
+        if status.get("sZDOInfo", {}).get("OnlineStatus_i") != 1:
+            raise IT600ValidationError("Cannot change floor comfort on an offline device")
+        validated_comfort_settings(status, check_command=False)
+        return status
+
+    async def set_climate_device_comfort_warm_floor(self, device_id: str, level: int) -> None:
+        """Send one profile-gated settings write; return on gateway acknowledgement.
+
+        Acknowledgement is not device confirmation. Poll normally to observe the
+        device. The local pending guard expires after 120 seconds; it never
+        replays a command or restores a stale snapshot. Schedule-driven runtime
+        fields and replacement app echoes do not prevent resolution.
+        """
+        level = _validate_int_range(level, "comfort warm floor level", 0, 3)
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        if not device.available:
+            raise IT600ValidationError("Cannot change floor comfort on an offline device")
+        async with self._comfort_floor_lock:
+            status = await self._read_comfort_status(device)
+            pending = self._pending_floor_commands.get(device_id)
+            expired_command = None
+            if pending is not None:
+                previous_command, expires_at = pending
+                if comfort_command_matches(status, previous_command):
+                    del self._pending_floor_commands[device_id]
+                elif self._comfort_floor_time() < expires_at:
+                    raise IT600ValidationError("Previous floor-comfort command is still pending or uncertain")
+                else:
+                    # Expiry ends blocking, but keep the local identity until
+                    # recovery succeeds. A failed stability read must not turn
+                    # this known echo into an unknown external command.
+                    expired_command = previous_command
+            echo = comfort_command_response(status)
+            # Only a known, expired local echo may bypass the in-flight echo
+            # check. Unknown external commands still use the strict guard.
+            stale_local_echo = expired_command is not None and echo == expired_command.lower() + "00"
+            original = validated_comfort_settings(status, check_command=not stale_local_echo)
+            if stale_local_echo or echo == NON_SETTINGS_RESPONSE:
+                await asyncio.sleep(2)
+                stable = await self._read_comfort_status(device)
+                if validated_comfort_settings(stable, check_command=False) != original:
+                    raise IT600ValidationError("Floor-comfort settings changed during stability check")
+                if comfort_command_response(stable) != comfort_command_response(status):
+                    stale_local_echo = False
+                    validated_comfort_settings(stable)
+                status = stable
+            command = build_comfort_warm_floor_command(status, level, check_command=not stale_local_echo)
+            if command is None:
+                return
+            self._pending_floor_commands[device_id] = (
+                command, self._comfort_floor_time() + COMFORT_PENDING_SECONDS,
+            )
+            result = await self._make_encrypted_request(
+                "write", {"requestAttr": "write", "id": [
+                    {"data": device.data, "sIT600I": {"SetCommand_d": command}},
+                ]}, retry_disconnect=False,
+            )
+            items = _response_items(result, "floor-comfort write")
+            if (len(items) != 1 or items[0].get("status") != "success"
+                    or items[0].get("data", {}).get("UniID") != device.unique_id
+                    or items[0].get("data", {}).get("Endpoint") != device.data.get("Endpoint")):
+                raise IT600CommandError("Gateway did not acknowledge the floor-comfort write")
+
     async def _write_sq610_property(
         self,
         device: ClimateDevice,
@@ -1458,6 +1545,8 @@ class IT600Gateway:
         self,
         command: str,
         request_body: dict[str, Any],
+        *,
+        retry_disconnect: bool = True,
     ) -> dict[str, Any]:
         """Makes encrypted Salus iT600 json request, decrypts and returns response."""
 
@@ -1468,7 +1557,7 @@ class IT600Gateway:
 
             request_url = f"http://{self._host}:{self._port}/deviceid/{command}"
             request_body_json = json.dumps(request_body)
-            retry_attempts = _DISCONNECT_RETRY_ATTEMPTS
+            retry_attempts = _DISCONNECT_RETRY_ATTEMPTS if retry_disconnect else 1
 
             if self._debug:
                 _LOGGER.debug(

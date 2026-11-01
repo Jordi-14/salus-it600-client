@@ -362,6 +362,7 @@ class ClimateDevice:
     cooling_capability_source: CoolingCapabilitySource = "none"
     diagnostic_fields: dict[str, Any] | None = None
     advanced_settings: ThermostatAdvancedSettings | None = None
+    supports_comfort_warm_floor: bool = False
 
     def __post_init__(self) -> None:
         """Normalize mutable constructor inputs for a frozen snapshot."""
