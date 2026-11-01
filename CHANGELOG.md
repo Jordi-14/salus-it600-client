@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Decode a complete Schedule alias when Status_2_d is present but incomplete.
 - Reject non-finite numeric values and revalidate temperature limits after half-degree rounding.
 - Add experimental, profile-gated SQ610RFNH/00000054 Comfort Warm Floor control.
   Preserve device-owned metadata, read fresh state and never replay B11 writes.
