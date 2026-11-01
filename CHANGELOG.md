@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject non-finite numeric values and revalidate temperature limits after half-degree rounding.
 - Add experimental, profile-gated SQ610RFNH/00000054 Comfort Warm Floor control.
   Preserve device-owned metadata, read fresh state and never replay B11 writes.
 - Return on gateway acknowledgement; normal polling provides device confirmation.
