@@ -3,6 +3,7 @@
 import json
 import unittest
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 from aiohttp import client_exceptions
 
@@ -35,8 +36,13 @@ from salus_it600.exceptions import (
     IT600UnsupportedFirmwareError,
     IT600ValidationError,
 )
-from salus_it600.gateway import IT600Gateway
+from salus_it600.gateway import (
+    IT600Gateway,
+    _validate_positive_number,
+    _validate_setpoint,
+)
 from salus_it600.models import ClimateDevice
+from salus_it600.parsers.common import _numeric_value
 from salus_it600.protocol import GatewayProtocol
 
 
@@ -996,6 +1002,51 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(context.exception, IT600Error)
         self.assertIsInstance(context.exception, ValueError)
         self.assertEqual([], session.post_calls)
+
+    def test_non_finite_numbers_are_rejected(self):
+        """Reject non-finite measurements, arguments and either device bound."""
+        for value in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(value=value):
+                self.assertIsNone(_numeric_value(value))
+                with self.assertRaisesRegex(
+                    IT600ValidationError, "timeout must be a finite number greater than 0"
+                ):
+                    _validate_positive_number(value, "timeout")
+                for arguments in ((value, 5, 35), (20, value, 35), (20, 5, value)):
+                    with (
+                        self.subTest(arguments=arguments),
+                        self.assertRaises(IT600ValidationError),
+                    ):
+                        _validate_setpoint(*arguments)
+
+    def test_inverted_temperature_bounds_are_invalid(self):
+        """Reject invalid device ranges before constructing a temperature write."""
+        with self.assertRaises(IT600ValidationError):
+            _validate_setpoint(20, 35, 5)
+
+    async def test_rounding_cannot_cross_device_temperature_limits(self):
+        """Explain the rounded value and do not write it beyond either bound."""
+        cases = ((5.1, 35, 5.1, 5.0), (5, 34.9, 34.9, 35.0))
+        for minimum, maximum, target, rounded in cases:
+            with self.subTest(minimum=minimum, maximum=maximum, target=target):
+                gateway = make_gateway(FakeSession())
+                gateway._climate_devices["climate-1"] = replace(
+                    make_climate_device(),
+                    min_temp=minimum,
+                    max_temp=maximum,
+                    min_heat_temp=minimum,
+                    max_heat_temp=maximum,
+                    system_mode=4,
+                )
+                gateway._make_encrypted_request = AsyncMock()
+                with self.assertRaises(IT600ValidationError) as context:
+                    await gateway.set_climate_device_temperature("climate-1", target)
+                self.assertEqual(
+                    str(context.exception),
+                    f"Rounded setpoint {rounded} °C from requested {target} °C "
+                    f"is outside the device range {minimum} to {maximum} °C",
+                )
+                gateway._make_encrypted_request.assert_not_called()
 
     async def test_unknown_device_raises_typed_not_found_error(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
