@@ -243,9 +243,7 @@ ASCII text. `set_mini_trv_mode()` sends the same commands as the vendor app:
 
 After a mode change the vendor app waits 4 seconds and then asks the TRV for a
 status report by writing `42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight
-zero bytes, `x`). This client does the same with a 2 second wait, which still worked in testing.
-
-Note: If users report issues with commands getting dropped/lost in future, consider upping request delay back up to 4 seconds, same as the vendor app.
+zero bytes, `x`). This client does the same.
 
 In tests, writing the status request with no pause dropped the mode command.
 This suggests `SetCommand_d` holds one command per device, with the last write

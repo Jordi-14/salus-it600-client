@@ -104,7 +104,7 @@ _MINI_TRV_MODE_COMMANDS = {
     MiniTrvMode.MANUAL_OFF: "42 33 38 38",
 }
 _MINI_TRV_STATUS_REQUEST = "42 33 37 00 00 00 00 00 00 00 00 78"
-_MINI_TRV_STATUS_REQUEST_DELAY = 2.0
+_MINI_TRV_STATUS_REQUEST_DELAY = 4.0
 # The gateway drops idle keep-alive connections without telling the client, so
 # the next request on a reused connection fails with ServerDisconnectedError.
 # One retry opens a fresh connection; reads and writes are both safe to resend.
