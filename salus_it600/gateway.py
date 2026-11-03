@@ -95,7 +95,7 @@ _SQ610_WRITE_LOCK_KEY = "SetLockKey"
 # it600MINITRV commands are raw strings written to `sIT600I.SetCommand_d`, as
 # space-separated hex bytes. These are the ones the vendor app sends. After a
 # mode change the app waits 4 seconds and asks the TRV for a status report
-# (`B37`); this client does the same after 2 seconds. The wait matters: a request
+# (`B37`); this client does the same. The wait matters: a request
 # written straight after the command cancels it. The gateway accepts any
 # SetCommand_d string, so a wrong command fails silently.
 _MINI_TRV_MODE_COMMANDS = {
@@ -1466,7 +1466,11 @@ class IT600Gateway:
         await self._write_device(device, {"sTherUIS": {"SetLockKey": int(locked)}})
 
     async def set_mini_trv_mode(self, device_id: str, mode: MiniTrvMode) -> None:
-        """Set an it600MINITRV to Auto, Manual On (open) or Manual Off (closed)."""
+        """Set an it600MINITRV to Auto, Manual On (open) or Manual Off (closed).
+
+        Takes about 4 seconds: after the mode command, the TRV needs a pause
+        before it is asked for a status report, or it drops the command.
+        """
 
         # Typed as object so the runtime check is not narrowed away by mypy.
         raw_mode: object = mode

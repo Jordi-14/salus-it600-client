@@ -119,6 +119,36 @@ class TestDecodeMiniTrvReport(unittest.TestCase):
 
         self.assertIsNone(decode_mini_trv_report(_hex(paired)))
 
+    def test_out_of_range_thermostat_temperature_is_none(self) -> None:
+        for label, text in {
+            "zero": SAMPLE_HEATING.replace("182020251850", "000020251850"),
+            "too high": SAMPLE_HEATING.replace("182020251850", "999920251850"),
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(
+                    MiniTrvReport(
+                        thermostat_temperature=None,
+                        trv_temperature=20.25,
+                        setpoint=18.5,
+                    ),
+                    decode_mini_trv_report(_hex(text)),
+                )
+
+    def test_out_of_range_setpoint_is_none(self) -> None:
+        for label, text in {
+            "zero": SAMPLE_HEATING.replace("182020251850", "182020250000"),
+            "too high": SAMPLE_HEATING.replace("182020251850", "182020259999"),
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(
+                    MiniTrvReport(
+                        thermostat_temperature=18.2,
+                        trv_temperature=20.25,
+                        setpoint=None,
+                    ),
+                    decode_mini_trv_report(_hex(text)),
+                )
+
     def test_lowercase_hex_is_accepted(self) -> None:
         report = decode_mini_trv_report(_hex(SAMPLE_HEATING).lower())
 

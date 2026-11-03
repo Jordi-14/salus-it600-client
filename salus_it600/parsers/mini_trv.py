@@ -82,15 +82,21 @@ _READING_REPEAT = slice(32, 36)
 _UNPAIRED_TAIL = slice(36, None)
 _MIN_UNPAIRED_TAIL_LENGTH = 19
 
-# A TRV temperature outside this range is treated as a decoding error rather
-# than a reading. The upper bound is far above any room temperature but still
-# rejects the larger values a misaligned 4-digit group would produce.
+# A temperature outside this range is treated as a decoding error rather than
+# a reading. The upper bound is far above any room temperature but still
+# rejects the larger values a misaligned 4-digit group would produce. An
+# implausible TRV temperature rejects the report; an implausible thermostat
+# temperature or setpoint is reported as None.
 _MIN_TRV_TEMPERATURE = 0.0
 _MAX_TRV_TEMPERATURE = 60.0
 
 
 class MiniTrvReport(NamedTuple):
-    """Temperatures decoded from an it600MINITRV `CommandResponse_d`."""
+    """Temperatures decoded from an it600MINITRV `CommandResponse_d`.
+
+    `thermostat_temperature` and `setpoint` are None for an unpaired TRV or
+    when the reported value is out of range.
+    """
 
     thermostat_temperature: float | None
     trv_temperature: float
@@ -120,6 +126,11 @@ def _is_hex(text: str) -> bool:
 
 def _temperature(text: str) -> float:
     return int(text) / TEMPERATURE_SCALE
+
+
+def _plausible_temperature(text: str) -> float | None:
+    temperature = _temperature(text)
+    return temperature if _plausible(temperature) else None
 
 
 def _has_common_fields(text: str) -> bool:
@@ -152,9 +163,9 @@ def _decode_paired(text: str) -> MiniTrvReport | None:
     ):
         return None
     return MiniTrvReport(
-        thermostat_temperature=_temperature(thermostat),
+        thermostat_temperature=_plausible_temperature(thermostat),
         trv_temperature=_temperature(trv),
-        setpoint=_temperature(setpoint),
+        setpoint=_plausible_temperature(setpoint),
     )
 
 
