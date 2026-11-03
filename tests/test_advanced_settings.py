@@ -173,6 +173,21 @@ class TestAdvancedSettingsDecoding(unittest.TestCase):
         assert from_preferred is not None
         self.assertTrue(from_preferred.valve_protection)
 
+    def test_incomplete_preferred_alias_falls_back_to_complete_schedule(self) -> None:
+        """Defensively decode the complete alias when the preferred one is unusable."""
+        expected = parse_advanced_settings({"Schedule": BASELINE})
+        self.assertIsNotNone(expected)
+        for preferred in ("", "72", "72" + "00" * 100, 42, None):
+            with self.subTest(preferred=preferred):
+                self.assertEqual(
+                    parse_advanced_settings({"Status_2_d": preferred, "Schedule": BASELINE}),
+                    expected,
+                )
+
+    def test_neither_alias_complete_returns_none(self) -> None:
+        """Do not decode a partial snapshot when both aliases are incomplete."""
+        self.assertIsNone(parse_advanced_settings({"Status_2_d": "72", "Schedule": BASELINE[:96]}))
+
     def test_malformed_blobs_are_rejected(self) -> None:
         malformed: tuple[tuple[str, dict[str, Any]], ...] = (
             ("missing", {}),
