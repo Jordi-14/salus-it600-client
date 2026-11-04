@@ -1,5 +1,6 @@
 """Tests for Salus gateway request handling."""
 
+import asyncio
 import json
 import unittest
 from dataclasses import replace
@@ -158,6 +159,30 @@ def make_mini_trv_device(
         sw_version=None,
         mini_trv_mode=int(MiniTrvMode.AUTO),
     )
+
+
+# Patching "salus_it600.gateway.asyncio.sleep" replaces asyncio.sleep everywhere,
+# so keep the original for yielding_sleep; calling asyncio.sleep inside it
+# would call yielding_sleep again and recurse.
+_real_sleep = asyncio.sleep
+
+
+async def yielding_sleep(_delay: float) -> None:
+    """Replace asyncio.sleep in tests: skip the wait but still let other tasks run.
+
+    Use it to patch a delay when a test checks what concurrent calls do during
+    that delay. A plain AsyncMock returns without yielding to the event loop, so
+    other tasks cannot run during the "sleep" and an overlap test proves nothing.
+    """
+    await _real_sleep(0)
+
+
+def get_sent_mini_trv_commands(session: FakeSession) -> list[str]:
+    """Return the SetCommand_d values posted to the gateway, in order."""
+    return [
+        json.loads(call[1]["data"])["id"][0]["sIT600I"]["SetCommand_d"]
+        for call in session.post_calls
+    ]
 
 
 def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
@@ -656,6 +681,49 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
                     requests[0]["id"][0]["data"],
                 )
                 sleep.assert_awaited_once()
+
+    async def test_set_mini_trv_mode_serializes_overlapping_calls_per_trv(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+        with patch("salus_it600.gateway.asyncio.sleep", new=yielding_sleep):
+            await asyncio.gather(
+                gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON),
+                gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_OFF),
+            )
+
+        manual_on = "42 33 38 37"  # B387: set mode to manual on
+        manual_off = "42 33 38 38"  # B388: set mode to manual off
+        # B37: ask the TRV to report its state, sent after each mode command's pause
+        status_request = "42 33 37 00 00 00 00 00 00 00 00 78"
+        # Each call's mode command and status request stay together. Without the
+        # lock, the second mode command would go out during the first call's
+        # pause: manual_on, manual_off, status_request, status_request.
+        self.assertEqual(
+            [manual_on, status_request, manual_off, status_request],
+            get_sent_mini_trv_commands(session),
+        )
+
+    async def test_set_mini_trv_mode_does_not_serialize_different_trvs(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+        gateway._binary_sensor_devices["trv-2"] = make_mini_trv_device("trv-2")
+
+        with patch("salus_it600.gateway.asyncio.sleep", new=yielding_sleep):
+            await asyncio.gather(
+                gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON),
+                gateway.set_mini_trv_mode("trv-2", MiniTrvMode.MANUAL_OFF),
+            )
+
+        manual_on = "42 33 38 37"  # B387: set trv-1 to manual on
+        manual_off = "42 33 38 38"  # B388: set trv-2 to manual off
+        commands = get_sent_mini_trv_commands(session)
+        # Different TRVs use different locks, so both mode commands go out before
+        # either status request. A shared lock would put trv-1's status request
+        # second, before trv-2's mode command.
+        self.assertEqual({manual_on, manual_off}, set(commands[:2]))
 
     async def test_set_mini_trv_mode_only_warns_when_status_request_fails(self):
         for error in (TimeoutError(), client_exceptions.ClientError()):

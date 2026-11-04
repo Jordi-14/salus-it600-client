@@ -507,6 +507,10 @@ class IT600Gateway:
         self._meter_sensor_devices: dict[str, SensorDevice] = {}
         self._wiring_centre_sensor_devices: dict[str, SensorDevice] = {}
         self._binary_sensor_sensor_devices: dict[str, SensorDevice] = {}
+        # One lock per mini TRV, shared by every command sequence sent to it.
+        # Ensures a command is executed to completion prior to commencing
+        # the next for the same TRV.
+        self._mini_trv_command_locks: dict[str, asyncio.Lock] = {}
 
     async def connect(self) -> str:
         """Validate gateway access and return the gateway MAC address.
@@ -1137,6 +1141,15 @@ class IT600Gateway:
     def _validate_device_id(device_id: str) -> str:
         return _validate_non_empty_string(device_id, "device_id")
 
+    def _mini_trv_command_lock(self, device_id: str) -> asyncio.Lock:
+        """Return the lock that serializes command sequences for one mini TRV.
+
+        Every multi-step command sent to a mini TRV must hold this lock, so an
+        in-progress request cannot be cut short by another command.
+        """
+
+        return self._mini_trv_command_locks.setdefault(device_id, asyncio.Lock())
+
     def _require_device(
         self,
         device_id: str,
@@ -1582,23 +1595,28 @@ class IT600Gateway:
                 f"binary sensor device {device_id!r} is not an it600MINITRV"
             )
 
-        await self._write_device(
-            device, {"sIT600I": {"SetCommand_d": _MINI_TRV_MODE_COMMANDS[mode]}}
-        )
-        await asyncio.sleep(_MINI_TRV_STATUS_REQUEST_DELAY)
-        # The mode command has already been sent, and the TRV reports its new mode
-        # without this request, so failing here would misreport the change.
-        try:
+        # Overlapping calls for the same TRV must not interleave: another mode
+        # command sent during the pause would get too little time before the
+        # status request and could be dropped.
+        async with self._mini_trv_command_lock(device_id):
             await self._write_device(
-                device, {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}}
+                device, {"sIT600I": {"SetCommand_d": _MINI_TRV_MODE_COMMANDS[mode]}}
             )
-        except (IT600CommandError, IT600ConnectionError) as err:
-            _LOGGER.warning(
-                "Sent mode %s to it600MINITRV %s, but its status request failed: %s",
-                mode.name,
-                device_id,
-                err,
-            )
+            await asyncio.sleep(_MINI_TRV_STATUS_REQUEST_DELAY)
+            # The mode command has already been sent, and the TRV reports its new
+            # mode without this request, so failing here would misreport the change.
+            try:
+                await self._write_device(
+                    device, {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}}
+                )
+            except (IT600CommandError, IT600ConnectionError) as err:
+                _LOGGER.warning(
+                    "Sent mode %s to it600MINITRV %s, but its status request "
+                    "failed: %s",
+                    mode.name,
+                    device_id,
+                    err,
+                )
 
     async def set_climate_device_temperature(
         self, device_id: str, setpoint_celsius: float
