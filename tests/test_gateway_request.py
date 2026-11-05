@@ -1,9 +1,10 @@
 """Tests for Salus gateway request handling."""
 
+import asyncio
 import json
 import unittest
 from dataclasses import replace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import client_exceptions
 
@@ -25,6 +26,7 @@ from salus_it600.const import (
     PRESET_PERMANENT_HOLD,
     PRESET_SCHEDULE_OVERRIDE,
     HoldType,
+    MiniTrvMode,
     RunningState,
     SystemMode,
 )
@@ -41,7 +43,7 @@ from salus_it600.gateway import (
     _validate_positive_number,
     _validate_setpoint,
 )
-from salus_it600.models import ClimateDevice
+from salus_it600.models import BinarySensorDevice, ClimateDevice
 from salus_it600.parsers.common import _numeric_value
 from salus_it600.protocol import GatewayProtocol
 
@@ -139,6 +141,48 @@ def make_gateway(session: FakeSession) -> IT600Gateway:
     gateway = IT600Gateway(host="192.0.2.10", euid="001E5E0D32906128", session=session)
     gateway._protocol = PassthroughProtocol()
     return gateway
+
+
+def make_mini_trv_device(
+    device_id: str = "trv-1", model: str = "it600MINITRV"
+) -> BinarySensorDevice:
+    """Create a minimal it600MINITRV relay device for command tests."""
+    return BinarySensorDevice(
+        available=True,
+        name="TRV",
+        unique_id=device_id,
+        is_on=False,
+        device_class="heat",
+        data={"DeviceType": 100, "Endpoint": 6, "UniID": device_id},
+        manufacturer="SALUS",
+        model=model,
+        sw_version=None,
+        mini_trv_mode=int(MiniTrvMode.AUTO),
+    )
+
+
+# Patching "salus_it600.gateway.asyncio.sleep" replaces asyncio.sleep everywhere,
+# so keep the original for yielding_sleep; calling asyncio.sleep inside it
+# would call yielding_sleep again and recurse.
+_real_sleep = asyncio.sleep
+
+
+async def yielding_sleep(_delay: float) -> None:
+    """Replace asyncio.sleep in tests: skip the wait but still let other tasks run.
+
+    Use it to patch a delay when a test checks what concurrent calls do during
+    that delay. A plain AsyncMock returns without yielding to the event loop, so
+    other tasks cannot run during the "sleep" and an overlap test proves nothing.
+    """
+    await _real_sleep(0)
+
+
+def get_sent_mini_trv_commands(session: FakeSession) -> list[str]:
+    """Return the SetCommand_d values posted to the gateway, in order."""
+    return [
+        json.loads(call[1]["data"])["id"][0]["sIT600I"]["SetCommand_d"]
+        for call in session.post_calls
+    ]
 
 
 def make_climate_device(device_id: str = "climate-1") -> ClimateDevice:
@@ -605,6 +649,146 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         request = json.loads(session.post_calls[0][1]["data"])
         self.assertEqual({"SetLockKey": 1}, request["id"][0]["sTherUIS"])
+
+    async def test_set_mini_trv_mode_writes_command_then_status_request(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+        expected = {
+            MiniTrvMode.AUTO: "42 33 38 31",
+            MiniTrvMode.MANUAL_ON: "42 33 38 37",
+            MiniTrvMode.MANUAL_OFF: "42 33 38 38",
+        }
+
+        for mode, command in expected.items():
+            with self.subTest(mode):
+                session.post_calls.clear()
+                with patch(
+                    "salus_it600.gateway.asyncio.sleep", new=AsyncMock()
+                ) as sleep:
+                    await gateway.set_mini_trv_mode("trv-1", mode)
+
+                requests = [json.loads(call[1]["data"]) for call in session.post_calls]
+                self.assertEqual(
+                    [
+                        {"SetCommand_d": command},
+                        {"SetCommand_d": "42 33 37 00 00 00 00 00 00 00 00 78"},
+                    ],
+                    [request["id"][0]["sIT600I"] for request in requests],
+                )
+                self.assertEqual(
+                    {"DeviceType": 100, "Endpoint": 6, "UniID": "trv-1"},
+                    requests[0]["id"][0]["data"],
+                )
+                sleep.assert_awaited_once()
+
+    async def test_set_mini_trv_mode_serializes_overlapping_calls_per_trv(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+        with patch("salus_it600.gateway.asyncio.sleep", new=yielding_sleep):
+            await asyncio.gather(
+                gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON),
+                gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_OFF),
+            )
+
+        manual_on = "42 33 38 37"  # B387: set mode to manual on
+        manual_off = "42 33 38 38"  # B388: set mode to manual off
+        # B37: ask the TRV to report its state, sent after each mode command's pause
+        status_request = "42 33 37 00 00 00 00 00 00 00 00 78"
+        # Each call's mode command and status request stay together. Without the
+        # lock, the second mode command would go out during the first call's
+        # pause: manual_on, manual_off, status_request, status_request.
+        self.assertEqual(
+            [manual_on, status_request, manual_off, status_request],
+            get_sent_mini_trv_commands(session),
+        )
+
+    async def test_set_mini_trv_mode_does_not_serialize_different_trvs(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+        gateway._binary_sensor_devices["trv-2"] = make_mini_trv_device("trv-2")
+
+        with patch("salus_it600.gateway.asyncio.sleep", new=yielding_sleep):
+            await asyncio.gather(
+                gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON),
+                gateway.set_mini_trv_mode("trv-2", MiniTrvMode.MANUAL_OFF),
+            )
+
+        manual_on = "42 33 38 37"  # B387: set trv-1 to manual on
+        manual_off = "42 33 38 38"  # B388: set trv-2 to manual off
+        commands = get_sent_mini_trv_commands(session)
+        # Different TRVs use different locks, so both mode commands go out before
+        # either status request. A shared lock would put trv-1's status request
+        # second, before trv-2's mode command.
+        self.assertEqual({manual_on, manual_off}, set(commands[:2]))
+
+    async def test_set_mini_trv_mode_only_warns_when_status_request_fails(self):
+        for error in (TimeoutError(), client_exceptions.ClientError()):
+            with self.subTest(type(error).__name__):
+                session = FakeSession(
+                    {"status": "success", "id": [{"status": "success"}]},
+                    error_sequence=[None, error],
+                )
+                gateway = make_gateway(session)
+                gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+                with (
+                    patch("salus_it600.gateway.asyncio.sleep", new=AsyncMock()),
+                    self.assertLogs("salus_it600", level="WARNING") as logs,
+                ):
+                    await gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON)
+
+                self.assertEqual(2, len(session.post_calls))
+                self.assertIn("MANUAL_ON", logs.output[0])
+                self.assertIn("trv-1", logs.output[0])
+
+    async def test_set_mini_trv_mode_raises_when_mode_command_fails(self):
+        session = FakeSession(error=TimeoutError())
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+        with (
+            patch("salus_it600.gateway.asyncio.sleep", new=AsyncMock()) as sleep,
+            self.assertRaises(IT600ConnectionError),
+        ):
+            await gateway.set_mini_trv_mode("trv-1", MiniTrvMode.MANUAL_ON)
+
+        self.assertEqual(1, len(session.post_calls))
+        sleep.assert_not_awaited()
+
+    async def test_set_mini_trv_mode_accepts_plain_int(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+
+        with patch("salus_it600.gateway.asyncio.sleep", new=AsyncMock()):
+            await gateway.set_mini_trv_mode("trv-1", 2)
+
+        request = json.loads(session.post_calls[0][1]["data"])
+        self.assertEqual({"SetCommand_d": "42 33 38 38"}, request["id"][0]["sIT600I"])
+
+    async def test_set_mini_trv_mode_rejects_invalid_requests(self):
+        session = FakeSession({"status": "success", "id": [{"status": "success"}]})
+        gateway = make_gateway(session)
+        gateway._binary_sensor_devices["trv-1"] = make_mini_trv_device()
+        gateway._binary_sensor_devices["rx-1"] = make_mini_trv_device(
+            "rx-1", model="it600Receiver"
+        )
+
+        with self.assertRaises(IT600ValidationError):
+            await gateway.set_mini_trv_mode("trv-1", 4)
+        with self.assertRaises(TypeError):
+            await gateway.set_mini_trv_mode("trv-1", True)
+        with self.assertRaises(TypeError):
+            await gateway.set_mini_trv_mode("trv-1", "auto")
+        with self.assertRaises(IT600ValidationError):
+            await gateway.set_mini_trv_mode("rx-1", MiniTrvMode.AUTO)
+        with self.assertRaises(IT600DeviceNotFoundError):
+            await gateway.set_mini_trv_mode("missing", MiniTrvMode.AUTO)
+        self.assertEqual([], session.post_calls)
 
     async def test_set_sq610_climate_device_locked_writes_it600th_lock_key(self):
         session = FakeSession({"status": "success", "id": [{"status": "success"}]})
