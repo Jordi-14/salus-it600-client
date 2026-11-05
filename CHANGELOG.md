@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0b2 - 2026-11-05
 
 - Add it600MINITRV entities: the TRV's own temperature (decoded from
   `sIT600I.CommandResponse_d`), RSSI and LQI diagnostic sensors, and a problem
@@ -15,6 +15,8 @@
 - Add `IT600Gateway.set_mini_trv_mode()` and the `MiniTrvMode` enum to set an
   it600MINITRV to Auto, Manual On (open) or Manual Off (closed). The reported
   `sIT600I.Mode` is exposed as `BinarySensorDevice.mini_trv_mode`.
+- Serialize overlapping mode changes for the same TRV, including the pause
+  before its status request. Different TRVs can run independently.
 - Export `decode_mini_trv_report()`, `MiniTrvReport` and `device_short_id()`
   from `salus_it600.parsers`.
 
