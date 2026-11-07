@@ -222,9 +222,11 @@ class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
                     host="192.0.2.10", euid=TestProtocols.EUID, session=session
                 )
 
-                with patch.object(session, "post", side_effect=error) as post:
-                    with self.assertRaises(IT600ConnectionError):
-                        await gateway.connect()
+                with (
+                    patch.object(session, "post", side_effect=error) as post,
+                    self.assertRaises(IT600ConnectionError),
+                ):
+                    await gateway.connect()
 
                 self.assertEqual(3, post.call_count)
                 self.assertEqual(1, len(session.get_calls))
@@ -261,7 +263,7 @@ class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
                 gateway = IT600Gateway(
                     host="192.0.2.10", euid=TestProtocols.EUID, session=FakeSession()
                 )
-                gateway._protocol_candidates = lambda: [
+                gateway._protocol_candidates = lambda errors=errors: [
                     FakeProtocol(str(index), error=error)
                     for index, error in enumerate(errors)
                 ]
