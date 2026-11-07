@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Keep gateway startup timeouts and connection failures retryable instead of
+  reporting an invalid EUID when the web server responds before the device API.
+  Preserve connection errors when reusing an already detected protocol too.
+
 ## 0.8.0b2 - 2026-11-05
 
 - Add it600MINITRV entities: the TRV's own temperature (decoded from
