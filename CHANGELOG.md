@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0b3 - 2026-11-08
 
 - Keep gateway startup timeouts and connection failures retryable instead of
   reporting an invalid EUID when the web server responds before the device API.
