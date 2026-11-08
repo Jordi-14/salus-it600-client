@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
+
+from aiohttp import client_exceptions
 
 from salus_it600.exceptions import (
     IT600AuthenticationError,
+    IT600ConnectionError,
     IT600UnsupportedFirmwareError,
 )
 from salus_it600.gateway import IT600Gateway
@@ -204,6 +208,99 @@ class TestProtocols(unittest.IsolatedAsyncioTestCase):
 class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
     """Test gateway protocol auto-detection."""
 
+    async def test_transport_failures_with_reachable_root_allow_later_connection(
+        self,
+    ) -> None:
+        for error in (
+            TimeoutError(),
+            client_exceptions.ServerDisconnectedError(),
+            client_exceptions.ClientConnectionError("connection lost"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                session = FakeSession()
+                gateway = IT600Gateway(
+                    host="192.0.2.10", euid=TestProtocols.EUID, session=session
+                )
+
+                with (
+                    patch.object(session, "post", side_effect=error) as post,
+                    self.assertRaises(IT600ConnectionError),
+                ):
+                    await gateway.connect()
+
+                self.assertEqual(3, post.call_count)
+                self.assertEqual(1, len(session.get_calls))
+                self.assertIsNone(gateway._protocol)
+
+                response = {
+                    "status": "success",
+                    "id": [{"sGateway": {"NetworkLANMAC": "AA"}}],
+                }
+                session.body = AesCbcProtocol(TestProtocols.EUID).encrypt(
+                    json.dumps(response)
+                )
+                self.assertEqual("AA", await gateway.connect())
+
+    async def test_http_errors_are_not_authentication_failures(self) -> None:
+        for status in (404, 503):
+            with self.subTest(status=status):
+                session = FakeSession(status=status)
+                gateway = IT600Gateway(
+                    host="192.0.2.10", euid=TestProtocols.EUID, session=session
+                )
+
+                with self.assertRaises(IT600ConnectionError) as context:
+                    await gateway.connect()
+
+                self.assertIsInstance(context.exception.__cause__, ProtocolHttpError)
+                self.assertEqual(1, len(session.get_calls))
+
+    async def test_mixed_decryption_and_timeout_failures_remain_retryable(self) -> None:
+        timeout = TimeoutError()
+        decrypt_error = ProtocolDecryptFailed(ValueError("bad padding"))
+        for errors in ((timeout, decrypt_error), (decrypt_error, timeout)):
+            with self.subTest(errors=errors):
+                gateway = IT600Gateway(
+                    host="192.0.2.10", euid=TestProtocols.EUID, session=FakeSession()
+                )
+                gateway._protocol_candidates = lambda errors=errors: [
+                    FakeProtocol(str(index), error=error)
+                    for index, error in enumerate(errors)
+                ]
+
+                with self.assertRaises(IT600ConnectionError) as context:
+                    await gateway.connect()
+
+                self.assertIs(context.exception.__cause__, timeout)
+
+    async def test_decryption_failures_still_raise_authentication_error(self) -> None:
+        gateway = IT600Gateway(
+            host="192.0.2.10", euid=TestProtocols.EUID, session=FakeSession(b"invalid")
+        )
+
+        with self.assertRaises(IT600AuthenticationError) as context:
+            await gateway.connect()
+
+        self.assertIsInstance(context.exception.__cause__, ProtocolDecryptFailed)
+
+    async def test_unreachable_root_after_detection_failure_is_connection_error(
+        self,
+    ) -> None:
+        session = FakeSession()
+        gateway = IT600Gateway(
+            host="192.0.2.10", euid=TestProtocols.EUID, session=session
+        )
+        error = client_exceptions.ClientConnectionError("gateway unavailable")
+
+        with (
+            patch.object(session, "post", side_effect=TimeoutError()),
+            patch.object(session, "get", side_effect=error),
+            self.assertRaises(IT600ConnectionError) as context,
+        ):
+            await gateway.connect()
+
+        self.assertIs(context.exception.__cause__, error)
+
     async def test_connect_uses_first_successful_protocol(self) -> None:
         success = FakeProtocol(
             "second",
@@ -265,7 +362,7 @@ class TestGatewayProtocolDetection(unittest.IsolatedAsyncioTestCase):
             FakeProtocol("first", error=ValueError("Gateway returned a reject frame")),
         ]
 
-        with self.assertRaises(IT600AuthenticationError):
+        with self.assertRaises(IT600ConnectionError):
             await gateway.connect()
 
     async def test_detected_protocol_is_used_for_requests(self) -> None:

@@ -490,6 +490,33 @@ class TestGatewayRequest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("AA:BB:CC:DD:EE:FF", mac)
 
+    async def test_connect_transport_failure_preserves_protocol_and_allows_retry(
+        self,
+    ) -> None:
+        for error, failures in (
+            (TimeoutError(), 1),
+            (client_exceptions.ServerDisconnectedError(), 2),
+            (client_exceptions.ClientConnectionError("connection lost"), 1),
+        ):
+            with self.subTest(error=type(error).__name__):
+                session = FakeSession(
+                    {
+                        "status": "success",
+                        "id": [{"sGateway": {"NetworkLANMAC": "AA"}}],
+                    },
+                    error_sequence=[error] * failures + [None],
+                )
+                gateway = make_gateway(session)
+                gateway._disconnect_retry_delay = 0
+                protocol = gateway._protocol
+
+                with self.assertRaises(IT600ConnectionError) as context:
+                    await gateway.connect()
+
+                self.assertIs(context.exception.__cause__, error)
+                self.assertIs(gateway._protocol, protocol)
+                self.assertEqual("AA", await gateway.connect())
+
     async def test_connect_rejects_response_without_gateway_info(self):
         session = FakeSession({"status": "success", "id": []})
         gateway = make_gateway(session)

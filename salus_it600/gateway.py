@@ -85,7 +85,7 @@ from .parsers import (
 )
 from .protocol import (
     GatewayProtocol,
-    ProtocolDetectionError,
+    ProtocolDecryptFailed,
     ProtocolRejected,
     ProtocolUnsupported,
     parse_frame_33,
@@ -516,9 +516,10 @@ class IT600Gateway:
         """Validate gateway access and return the gateway MAC address.
 
         Raises:
-            IT600ConnectionError: If the gateway cannot be reached.
-            IT600AuthenticationError: If the gateway answers but rejects the
-                encrypted request, usually due to an invalid EUID.
+            IT600ConnectionError: If the gateway cannot be reached or its
+                device API is not ready.
+            IT600AuthenticationError: If protocol detection receives only
+                undecryptable replies, usually due to an invalid EUID.
             IT600CommandError: If the gateway response has no gateway device.
         """
 
@@ -531,44 +532,32 @@ class IT600Gateway:
         if self._protocol is None:
             return await self._connect_with_protocol_detection()
 
-        try:
-            all_devices = await self._make_encrypted_request(
-                "read", {"requestAttr": "readall"}
-            )
+        # A responding web root does not establish that the encrypted device API
+        # is ready. Preserve transport errors so callers can retry this connection.
+        all_devices = await self._make_encrypted_request(
+            "read", {"requestAttr": "readall"}
+        )
 
-            gateway = next(
-                filter(
-                    lambda x: len(x.get("sGateway", {}).get("NetworkLANMAC", "")) > 0,
-                    _response_items(all_devices, "gateway discovery"),
-                ),
-                None,
-            )
+        gateway = next(
+            filter(
+                lambda x: len(x.get("sGateway", {}).get("NetworkLANMAC", "")) > 0,
+                _response_items(all_devices, "gateway discovery"),
+            ),
+            None,
+        )
 
-            if gateway is None:
-                raise IT600CommandError(
-                    "Error occurred while communicating with iT600 gateway: "
-                    "response did not contain gateway information"
-                )
-
-            gateway_mac = gateway["sGateway"]["NetworkLANMAC"]
-            if not isinstance(gateway_mac, str):
-                raise IT600CommandError(
-                    "Gateway discovery response contained an invalid MAC address"
-                )
-            return gateway_mac
-        except IT600ConnectionError as ae:
-            try:
-                await self._probe_gateway_root()
-            except (TimeoutError, client_exceptions.ClientError):
-                raise IT600ConnectionError(
-                    "Error occurred while communicating with iT600 gateway: "
-                    "check if you have specified host/IP address correctly"
-                ) from ae
-
-            raise IT600AuthenticationError(
+        if gateway is None:
+            raise IT600CommandError(
                 "Error occurred while communicating with iT600 gateway: "
-                "check if you have specified EUID correctly"
-            ) from ae
+                "response did not contain gateway information"
+            )
+
+        gateway_mac = gateway["sGateway"]["NetworkLANMAC"]
+        if not isinstance(gateway_mac, str):
+            raise IT600CommandError(
+                "Gateway discovery response contained an invalid MAC address"
+            )
+        return gateway_mac
 
     def _log_parse_failure(
         self,
@@ -613,6 +602,8 @@ class IT600Gateway:
         result: dict[str, Any] | None = None
         saw_reject = False
         saw_unsupported_protocol = False
+        authentication_error: ProtocolDecryptFailed | None = None
+        connection_error: Exception | None = None
 
         for protocol in self._protocol_candidates():
             try:
@@ -632,13 +623,13 @@ class IT600Gateway:
                     saw_reject = True
                 else:
                     saw_unsupported_protocol = True
-            except ProtocolDetectionError as exc:
+            except ProtocolDecryptFailed as exc:
+                authentication_error = exc
                 _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
             except Exception as exc:  # noqa: BLE001 - keep probing the next protocol
-                # Protocol detection is a probe: any failure means "not this
-                # protocol", including ones the protocol implementations do not
-                # wrap. A hard error is raised below only once every candidate
-                # has been tried.
+                # A timeout or an unavailable device API says nothing about the
+                # EUID, even if another candidate received an undecryptable reply.
+                connection_error = exc
                 _LOGGER.debug("Salus protocol %s failed: %s", protocol.name, exc)
 
         if result is not None:
@@ -663,10 +654,16 @@ class IT600Gateway:
                 "Gateway is reachable but uses an unsupported encryption protocol"
             )
 
-        raise IT600AuthenticationError(
+        if authentication_error is not None and connection_error is None:
+            raise IT600AuthenticationError(
+                "Error occurred while communicating with iT600 gateway: "
+                "check if you have specified EUID correctly"
+            ) from authentication_error
+
+        raise IT600ConnectionError(
             "Error occurred while communicating with iT600 gateway: "
-            "check if you have specified EUID correctly"
-        )
+            "device API is unavailable; try connecting again"
+        ) from connection_error
 
     def _client_timeout(self) -> aiohttp.ClientTimeout:
         """Return the per-request timeout used for gateway HTTP calls."""
