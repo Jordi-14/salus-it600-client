@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 - 2026-11-08
+
+- Promote 0.8.0b3 to stable with no runtime changes beyond the version bump.
+- Includes MiniTRV temperature, mode and diagnostic support, retryable gateway
+  startup failures, stricter setpoint validation and complete settings aliases.
+- Comfort Warm Floor remains experimental and restricted to the verified
+  SQ610RFNH / firmware 00000054 profile.
+
 ## 0.8.0b3 - 2026-11-08
 
 - Keep gateway startup timeouts and connection failures retryable instead of
