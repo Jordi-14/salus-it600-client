@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Add `IT600Gateway(mini_trv_request_report_after=seconds)` to ask each
+  it600MINITRV for a status report when it has gone that long without sending
+  one. When set, `poll_status()` writes
+  the same `B37` status request the vendor app uses, once at startup (or when a
+  TRV the gateway left out of a poll comes back) and then whenever a TRV has
+  gone that long without a new report or a request; the reply shows up in a
+  later poll. Offline TRVs and TRVs in the middle of a mode
+  change are skipped, and a failed request is logged without failing the poll.
+  Off by default (`None`), because the effect on the TRV's battery life has not
+  been measured.
+- `set_mini_trv_mode()` now keys its per-TRV lock on the device's unique ID, so a
+  padded `device_id` shares the lock with the poll's report requests.
+
 ## 0.8.0b3 - 2026-11-08
 
 - Keep gateway startup timeouts and connection failures retryable instead of

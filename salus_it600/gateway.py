@@ -5,6 +5,7 @@ import json
 import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Self, TypeVar
 
 import aiohttp
@@ -67,6 +68,7 @@ from .models import (
 )
 from .parsers import (
     PARSING_EXCEPTIONS,
+    decode_mini_trv_report,
     device_short_id,
     parse_binary_diagnostic_devices,
     parse_binary_relay_sensor_devices,
@@ -432,6 +434,21 @@ def _flatten_dict(data: dict[str, Any]) -> dict[str, Any]:
     return flattened
 
 
+@dataclass
+class _MiniTrvReportState:
+    """When one it600MINITRV last reported, and when it was last asked to."""
+
+    # The last `CommandResponse_d` seen. A changed value that decodes is a new
+    # report; a poll that omits the field changes nothing.
+    response: str | None = None
+    # Loop times; None means unknown. The report already present on the first
+    # poll has an unknown age, so it does not set `reported_at`.
+    reported_at: float | None = None
+    requested_at: float | None = None
+    # Whether the last status request failed, so repeats are logged at debug.
+    request_failed: bool = False
+
+
 class IT600Gateway:
     """Async client for one Salus UG600 local gateway."""
 
@@ -443,6 +460,7 @@ class IT600Gateway:
         request_timeout: float = 5,
         session: aiohttp.ClientSession | None = None,
         debug: bool = False,
+        mini_trv_request_report_after: float | None = None,
     ) -> None:
         """Create a gateway client.
 
@@ -455,6 +473,9 @@ class IT600Gateway:
             session: Optional externally managed aiohttp session.
             debug: Log raw encrypted-command JSON before encryption and after
                 decryption.
+            mini_trv_request_report_after: Seconds an it600MINITRV can go
+                without a new report, or a request for one, before
+                `poll_status()` asks it for one. None (default) turns this off.
         """
         euid = _validate_non_empty_string(euid, "euid")
         host = _validate_non_empty_string(host, "host")
@@ -463,6 +484,11 @@ class IT600Gateway:
             request_timeout,
             "request_timeout",
         )
+        if mini_trv_request_report_after is not None:
+            mini_trv_request_report_after = _validate_positive_number(
+                mini_trv_request_report_after,
+                "mini_trv_request_report_after",
+            )
 
         self._euid = euid
         self._encryptor = IT600Encryptor(euid)
@@ -472,6 +498,7 @@ class IT600Gateway:
         self._request_timeout = request_timeout
         self._disconnect_retry_delay = _DISCONNECT_RETRY_DELAY
         self._debug = debug
+        self._mini_trv_request_report_after = mini_trv_request_report_after
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
         self._comfort_floor_lock = asyncio.Lock()
         self._pending_floor_commands: dict[str, tuple[str, float]] = {}
@@ -511,6 +538,7 @@ class IT600Gateway:
         # Ensures a command is executed to completion prior to commencing
         # the next for the same TRV.
         self._mini_trv_command_locks: dict[str, asyncio.Lock] = {}
+        self._mini_trv_report_states: dict[str, _MiniTrvReportState] = {}
 
     async def connect(self) -> str:
         """Validate gateway access and return the gateway MAC address.
@@ -698,6 +726,11 @@ class IT600Gateway:
         `deviceid` request and falls back to one request per device family when
         the gateway does not handle that. Invalid individual devices are logged
         and skipped; gateway communication errors propagate to the caller.
+
+        Afterwards, if `mini_trv_request_report_after` is set, each online
+        it600MINITRV that has gone that many seconds without a new report or a
+        request for one is asked for a report (see `_request_stale_mini_trv_reports`).
+        The reply shows up in a later poll.
         """
 
         all_devices = await self._make_encrypted_request(
@@ -744,6 +777,8 @@ class IT600Gateway:
             await self._refresh_meter_devices(meters)
         finally:
             self._prefetched_details = None
+
+        await self._request_stale_mini_trv_reports()
 
     async def _prefetch_device_details(
         self,
@@ -1028,6 +1063,8 @@ class IT600Gateway:
 
             if device is not None:
                 local_devices[device.unique_id] = device
+                if device.model == MODEL_MINI_TRV:
+                    self._note_mini_trv_report(device.unique_id, device_status)
 
             for diagnostic in diagnostics:
                 diagnostic_devices[diagnostic.unique_id] = diagnostic
@@ -1037,6 +1074,11 @@ class IT600Gateway:
 
         self._binary_sensor_devices = local_devices
         self._binary_sensor_diagnostic_devices = diagnostic_devices
+        # Forget report state for TRVs missing from this poll (offline ones are
+        # still listed), so the dict doesn't keep removed devices. A TRV that
+        # returns is treated like one seen at startup and asked straight away.
+        for device_id in self._mini_trv_report_states.keys() - local_devices.keys():
+            del self._mini_trv_report_states[device_id]
         self._binary_sensor_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s binary sensor devices", len(local_devices))
 
@@ -1146,6 +1188,83 @@ class IT600Gateway:
         """
 
         return self._mini_trv_command_locks.setdefault(device_id, asyncio.Lock())
+
+    def _mini_trv_report_time(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def _mini_trv_report_state(self, device_id: str) -> _MiniTrvReportState:
+        return self._mini_trv_report_states.setdefault(device_id, _MiniTrvReportState())
+
+    def _note_mini_trv_report(
+        self,
+        device_id: str,
+        device_status: dict[str, Any],
+    ) -> None:
+        """Record when an it600MINITRV's `CommandResponse_d` holds a new report.
+
+        The gateway keeps the last report, so a new one shows up as a changed
+        value. A value that does not decode, such as another kind of response,
+        is not a status report and does not count.
+        """
+        sit600i = device_status.get("sIT600I")
+        response = sit600i.get("CommandResponse_d") if isinstance(sit600i, dict) else None
+        state = self._mini_trv_report_state(device_id)
+        if not isinstance(response, str) or not response or response == state.response:
+            return
+
+        first_seen = state.response is None
+        state.response = response
+        if not first_seen and decode_mini_trv_report(response) is not None:
+            state.reported_at = self._mini_trv_report_time()
+            state.request_failed = False
+
+    def _mini_trv_report_request_due(self, state: _MiniTrvReportState, now: float) -> bool:
+        request_after = self._mini_trv_request_report_after
+        if request_after is None:
+            return False
+        times = [t for t in (state.reported_at, state.requested_at) if t is not None]
+        return not times or now - max(times) >= request_after
+
+    async def _request_stale_mini_trv_reports(self) -> None:
+        """Ask each online it600MINITRV with no recent report to send one.
+
+        A TRV is skipped while another command sequence for it holds its lock:
+        `set_mini_trv_mode()` asks for a report itself, and a request written
+        during its pause would cancel the mode command. A failed request is
+        logged and retried once `mini_trv_request_report_after` has passed
+        again; it does not fail the poll.
+        """
+        if self._mini_trv_request_report_after is None:
+            return
+
+        for device_id, device in list(self._binary_sensor_devices.items()):
+            if device.model != MODEL_MINI_TRV or not device.available:
+                continue
+            state = self._mini_trv_report_state(device_id)
+            lock = self._mini_trv_command_lock(device_id)
+            if lock.locked() or not self._mini_trv_report_request_due(
+                state, self._mini_trv_report_time()
+            ):
+                continue
+
+            async with lock:
+                state.requested_at = self._mini_trv_report_time()
+                try:
+                    await self._write_device(
+                        device,
+                        {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}},
+                    )
+                except (IT600CommandError, IT600ConnectionError) as err:
+                    log = _LOGGER.debug if state.request_failed else _LOGGER.warning
+                    log(
+                        "Could not ask it600MINITRV %s for a status report: %s",
+                        device_id,
+                        err,
+                    )
+                    state.request_failed = True
+                else:
+                    state.request_failed = False
+                    _LOGGER.debug("Asked it600MINITRV %s for a status report", device_id)
 
     def _require_device(
         self,
@@ -1595,11 +1714,15 @@ class IT600Gateway:
         # Overlapping calls for the same TRV must not interleave: another mode
         # command sent during the pause would get too little time before the
         # status request and could be dropped.
-        async with self._mini_trv_command_lock(device_id):
+        async with self._mini_trv_command_lock(device.unique_id):
             await self._write_device(
                 device, {"sIT600I": {"SetCommand_d": _MINI_TRV_MODE_COMMANDS[mode]}}
             )
             await asyncio.sleep(_MINI_TRV_STATUS_REQUEST_DELAY)
+            # So the next poll does not send a second request straight after.
+            self._mini_trv_report_state(device.unique_id).requested_at = (
+                self._mini_trv_report_time()
+            )
             # The mode command has already been sent, and the TRV reports its new
             # mode without this request, so failing here would misreport the change.
             try:

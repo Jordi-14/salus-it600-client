@@ -75,7 +75,7 @@ Smart plugs and relays (SP600, SPE600, SR600, and RS600 relay endpoints): on/off
 
 it600MINITRV: read the reported mode from `BinarySensorDevice.mini_trv_mode` and set Auto, Manual On (open) or Manual Off (closed) with `set_mini_trv_mode(device_id, MiniTrvMode.AUTO)`. A mode change takes about 4 seconds, because the client waits before asking the TRV for a status report.
 
-The it600MINITRV's own temperature is decoded from the last report the TRV sent (`sIT600I.CommandResponse_d`), and the last good reading is kept until a new one arrives. The TRV sends reports irregularly, so the reading can be several hours old (gaps of 4-8 hours have been seen with the vendor app closed). Mode changes request a fresh report.
+The it600MINITRV's own temperature is decoded from the last report the TRV sent (`sIT600I.CommandResponse_d`), and the last good reading is kept until a new one arrives. The TRV sends reports irregularly, so the reading can be several hours old (gaps of 4-8 hours have been seen with the vendor app closed). Mode changes request a fresh report. The client can also ask for one regularly: with `IT600Gateway(..., mini_trv_request_report_after=seconds)`, `poll_status()` sends the TRV's status request whenever it has gone that long without a new report or a request for one, and the reply shows up in a later poll. The vendor app never does this on a schedule; it asks only when a device's information screen opens, when its refresh button is tapped, and after a command. So this is off by default, because the effect of extra requests on the TRV's battery life has not been measured.
 
 ### RS600 notes
 
