@@ -11,7 +11,8 @@
   later poll. Offline TRVs and TRVs in the middle of a mode
   change are skipped, and a failed request is logged without failing the poll.
   Off by default (`None`), because the effect on the TRV's battery life has not
-  been measured.
+  been measured. The `IT600Gateway.mini_trv_request_report_after` property
+  reads and changes the setting at runtime; the next poll uses the new value.
 - `set_mini_trv_mode()` now keys its per-TRV lock on the device's unique ID, so a
   padded `device_id` shares the lock with the poll's report requests.
 

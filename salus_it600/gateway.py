@@ -189,6 +189,15 @@ def _validate_positive_number(value: float, field_name: str) -> int | float:
     return value
 
 
+def _validate_mini_trv_request_report_after(
+    value: float | None,
+) -> int | float | None:
+    """Validate `mini_trv_request_report_after`: None, or seconds greater than 0."""
+    if value is None:
+        return None
+    return _validate_positive_number(value, "mini_trv_request_report_after")
+
+
 def _validate_int_range(
     value: int,
     field_name: str,
@@ -484,11 +493,9 @@ class IT600Gateway:
             request_timeout,
             "request_timeout",
         )
-        if mini_trv_request_report_after is not None:
-            mini_trv_request_report_after = _validate_positive_number(
-                mini_trv_request_report_after,
-                "mini_trv_request_report_after",
-            )
+        mini_trv_request_report_after = _validate_mini_trv_request_report_after(
+            mini_trv_request_report_after
+        )
 
         self._euid = euid
         self._encryptor = IT600Encryptor(euid)
@@ -717,6 +724,23 @@ class IT600Gateway:
         answer, or drops it repeatedly.
         """
         return self._combined_detail_requests
+
+    @property
+    def mini_trv_request_report_after(self) -> int | float | None:
+        """Seconds an it600MINITRV can go without a report before one is requested.
+
+        None means `poll_status()` never asks. It can be changed at any time and
+        the next poll uses the new value. Each TRV's wait is measured from its
+        last new report or request, so after a change the next poll asks every
+        TRV that has already waited longer than the new value.
+        """
+        return self._mini_trv_request_report_after
+
+    @mini_trv_request_report_after.setter
+    def mini_trv_request_report_after(self, value: float | None) -> None:
+        self._mini_trv_request_report_after = _validate_mini_trv_request_report_after(
+            value
+        )
 
     async def poll_status(self) -> None:
         """Refresh all known device collections from the gateway.

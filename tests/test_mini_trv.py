@@ -943,6 +943,63 @@ class TestMiniTrvPollStatusRequests(unittest.IsolatedAsyncioTestCase):
                     mini_trv_request_report_after=value,  # type: ignore[arg-type]
                 )
 
+    async def test_turned_on_at_runtime_asks_trv_with_no_recent_report(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        self.assertEqual([], await fake.poll(1000))
+
+        fake.gateway.mini_trv_request_report_after = REQUEST_AFTER
+
+        self.assertEqual(REQUEST_AFTER, fake.gateway.mini_trv_request_report_after)
+        self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1020))
+        self.assertEqual([], await fake.poll(1020 + REQUEST_AFTER - 1))
+
+    async def test_turned_on_at_runtime_waits_after_a_new_report(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        await fake.poll(1000)
+        # A report that arrives while requests are off still counts.
+        fake.set_response(_hex(SAMPLE_IDLE))
+        await fake.poll(1500)
+
+        fake.gateway.mini_trv_request_report_after = REQUEST_AFTER
+
+        self.assertEqual([], await fake.poll(1500 + REQUEST_AFTER - 1))
+        self.assertEqual(
+            [("trv_mini_1", STATUS_REQUEST)], await fake.poll(1500 + REQUEST_AFTER)
+        )
+
+    async def test_turned_off_at_runtime(self) -> None:
+        fake = _FakeTrvGateway()
+        self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1000))
+
+        fake.gateway.mini_trv_request_report_after = None
+
+        self.assertIsNone(fake.gateway.mini_trv_request_report_after)
+        self.assertEqual([], await fake.poll(1000 + 10 * REQUEST_AFTER))
+
+    async def test_shortened_at_runtime(self) -> None:
+        fake = _FakeTrvGateway()
+        await fake.poll(1000)
+        self.assertEqual([], await fake.poll(1100))
+
+        fake.gateway.mini_trv_request_report_after = 60
+
+        self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1100))
+
+    def test_setter_rejects_invalid_request_report_after(self) -> None:
+        gateway = IT600Gateway(
+            host="192.0.2.10", euid="001E5E0D32906128", session=object()
+        )
+        for value, error in (
+            (0, IT600ValidationError),
+            (-1, IT600ValidationError),
+            (float("inf"), IT600ValidationError),
+            (True, TypeError),
+            ("1800", TypeError),
+        ):
+            with self.subTest(value=value), self.assertRaises(error):
+                gateway.mini_trv_request_report_after = value  # type: ignore[assignment]
+        self.assertIsNone(gateway.mini_trv_request_report_after)
+
 
 if __name__ == "__main__":
     unittest.main()
