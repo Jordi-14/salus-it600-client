@@ -217,9 +217,8 @@ The minimum tails (16 hex characters after a paired `@`, 19 from character 36 of
 an unpaired report) are lower limits based on edited samples, not protocol rules.
 The complete reports available, one paired from a real TRV and one unpaired
 stored in the vendor app, are both 73 characters and hold hex letters in the
-tail. Characters 49-50 are RSSI: the vendor web app reads them as two hex digits
-and makes the byte signed (subtracting 256 when it is 0 or more), and on TRV firmware
-5.1 or older reads characters 53-54 instead. The client does not decode them;
+tail. Characters 49-50 are RSSI as a signed byte (characters 53-54 on TRV
+firmware 5.1 or older). The client does not decode them;
 `sIT600I.LastMessageRSSI_d` reports signal strength instead.
 
 The valve position is checked for shape but not decoded. Two TRVs tested read
@@ -247,44 +246,21 @@ After a mode change the vendor app waits 4 seconds and then asks the TRV for a
 status report by writing `42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight
 zero bytes, `x`). This client does the same.
 
-The vendor app does not ask for reports on a schedule. It writes the status request only:
+The vendor app does not ask for reports on a schedule. It writes the status
+request only when a device's information screen opens, when its signal-strength
+refresh button is tapped, and after a command.
 
-- once when a device's Equipment information screen opens (or during pairing),
-  if the device is online;
-- when the refresh button next to its signal strength is tapped: up to five
-  requests 3 seconds apart, then it stops;
-- 4 seconds after a command, as above.
+The TRV sends reports on its own, but irregularly, sometimes hours apart. When
+the gateway is created with `mini_trv_request_report_after` (seconds; off by
+default, as the effect on battery life is unknown), `poll_status()` writes the
+status request to each online TRV that has gone that long without a new report.
+The reply arrives in a later poll, not the one that sent the request.
 
-In the vendor app, this request belongs to its signal-strength display: its
-per-model table names `B37` as the it600MINITRV's request and `423337` as the
-expected reply.
-
-The TRV also sends reports on its own, but irregularly: gaps of 4-8 hours have
-been seen with the vendor app closed. When the gateway is created with
-`mini_trv_request_report_after` (seconds; off by default, because the effect on
-battery life has not been measured), `poll_status()` writes the same status
-request to each online TRV that has gone that long without a new report or a
-request for one.
-A new report is a `CommandResponse_d` value that differs from the last one seen
-and decodes; a poll that omits the field, or another kind of response, does not
-count. The report already present on the first poll has an unknown age, so each
-TRV is asked once at startup. The reply arrives in a later poll, not the one that
-sent the request. A TRV is skipped while a mode change for it is in progress,
-because a request written during that change's 4-second pause would cancel it.
-
-After a gateway restart, the gateway still lists an online TRV
-(`sZDOInfo.OnlineStatus_i` 1) but its `deviceid` record has no `sIT600I` block
-until the TRV next sends a message. Only `DeviceL`, `data`, `sAWSReg`,
-`sBasicS`, `sEndpt`, `sGenSche`, `sIT600D`, `sOTA`, `sZDO`, `sZDOInfo` and
-`status` are present, so there is no `RelayStatus`, `Mode`, RSSI, LQI,
-`CommandResponse_d` or `TRVError*`. Without `RelayStatus` the client has no
-device for the TRV. Seen on 2026-11-20 on two of three TRVs after a restart. One
-status request, written to the record's `data` envelope, brought the block back
-within 15 seconds. So `poll_status()` sends that request once to each such TRV
-as soon as it sees it, even when `mini_trv_request_report_after` is None. While
-the block is still missing, later requests follow `mini_trv_request_report_after`
-like any other TRV; with None there are none. Each request starts the TRV's
-regular wait, so the TRV is not asked again as soon as it returns.
+After a gateway restart, an online TRV's `deviceid` record can lack the
+`sIT600I` block (so no `RelayStatus`, `Mode` or `CommandResponse_d`) until the
+TRV next sends a message. One status request brings the block back within
+seconds, so `poll_status()` sends one to each such TRV as soon as it sees it,
+even when `mini_trv_request_report_after` is None.
 
 In tests, writing the status request with no pause dropped the mode command.
 This suggests `SetCommand_d` holds one command per device, with the last write
