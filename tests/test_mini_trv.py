@@ -16,6 +16,7 @@ from salus_it600.parsers import (
     MiniTrvReport,
     decode_mini_trv_report,
     device_short_id,
+    is_mini_trv_missing_status,
     parse_binary_diagnostic_devices,
     parse_binary_relay_sensor_devices,
     parse_binary_sensor_device,
@@ -601,6 +602,39 @@ class TestMiniTrvParsers(unittest.TestCase):
                 self.assertIsNone(device.extra_state_attributes)
 
 
+class TestMiniTrvMissingStatus(unittest.TestCase):
+    """Online it600MINITRV records with no `sIT600I` block (gateway restart)."""
+
+    def _record(self) -> dict[str, Any]:
+        payload = _mini_trv_payload()
+        del payload["sIT600I"]
+        return payload
+
+    def test_online_trv_without_sit600i(self) -> None:
+        payload = self._record()
+
+        self.assertTrue(is_mini_trv_missing_status(payload))
+        # The case that needs the request: the parser has no device for it.
+        self.assertIsNone(parse_binary_sensor_device(payload))
+
+    def test_not_missing_cases(self) -> None:
+        offline = self._record()
+        offline["sZDOInfo"]["OnlineStatus_i"] = 0
+        receiver = self._record()
+        receiver["DeviceL"]["ModelIdentifier_i"] = "RX10RF"
+        no_unique_id = self._record()
+        del no_unique_id["data"]["UniID"]
+
+        for name, payload in (
+            ("has sIT600I", _mini_trv_payload()),
+            ("offline", offline),
+            ("other model", receiver),
+            ("no UniID", no_unique_id),
+        ):
+            with self.subTest(name):
+                self.assertFalse(is_mini_trv_missing_status(payload))
+
+
 class TestMiniTrvGatewayRefresh(unittest.IsolatedAsyncioTestCase):
     """MiniTRV entities through the gateway caches."""
 
@@ -740,6 +774,13 @@ class _FakeTrvGateway:
             sit600i.pop("CommandResponse_d", None)
         else:
             sit600i["CommandResponse_d"] = value
+
+    def drop_status(self, device_id: str = "trv_mini_1") -> dict[str, Any]:
+        """Remove a TRV's `sIT600I` block, as after a gateway restart.
+
+        Returns the removed block, so a test can put it back.
+        """
+        return self.payloads[device_id].pop("sIT600I")
 
     async def poll(self, at: float) -> list[tuple[str, str]]:
         """Run `poll_status()` at time `at` and return the writes it made.
@@ -999,6 +1040,132 @@ class TestMiniTrvPollStatusRequests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(value=value), self.assertRaises(error):
                 gateway.mini_trv_request_report_after = value  # type: ignore[assignment]
         self.assertIsNone(gateway.mini_trv_request_report_after)
+
+
+class TestMiniTrvMissingStatusRequests(unittest.IsolatedAsyncioTestCase):
+    """Status requests for online MiniTRVs whose record has no `sIT600I` block.
+
+    After a gateway restart the gateway has no status for a TRV until it next
+    sends a message, so the client has no device for it. One request brings it
+    back, so it is sent straight away even when `mini_trv_request_report_after`
+    is None. Repeats follow `mini_trv_request_report_after`.
+    """
+
+    async def test_asked_when_regular_requests_are_off(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        fake.drop_status()
+
+        with self.assertLogs("salus_it600", level="INFO") as logs:
+            self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1000))
+
+        self.assertIsNone(fake.gateway.get_binary_sensor_device("trv_mini_1"))
+        self.assertTrue(
+            any(
+                line.startswith("INFO") and "has no status" in line
+                for line in logs.output
+            )
+        )
+
+    async def test_asked_only_once_when_regular_requests_are_off(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        fake.drop_status()
+        await fake.poll(1000)
+
+        self.assertEqual([], await fake.poll(1000 + 10 * REQUEST_AFTER))
+
+    async def test_retried_on_the_regular_schedule_while_still_missing(self) -> None:
+        fake = _FakeTrvGateway()
+        fake.drop_status()
+        await fake.poll(1000)
+
+        with self.assertLogs("salus_it600", level="DEBUG") as logs:
+            self.assertEqual([], await fake.poll(1000 + REQUEST_AFTER - 1))
+            self.assertEqual(
+                [("trv_mini_1", STATUS_REQUEST)],
+                await fake.poll(1000 + REQUEST_AFTER),
+            )
+
+        # Repeats for the same episode are logged at debug.
+        asks = [line for line in logs.output if "has no status" in line]
+        self.assertEqual(1, len(asks))
+        self.assertTrue(asks[0].startswith("DEBUG"))
+
+    async def test_asked_straight_away_after_a_recent_regular_request(self) -> None:
+        fake = _FakeTrvGateway()
+        await fake.poll(1000)  # Regular request while the block is present.
+
+        fake.drop_status()  # Gateway restart a minute later.
+
+        self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1060))
+        self.assertEqual([], await fake.poll(1060 + REQUEST_AFTER - 1))
+
+    async def test_offline_record_is_not_asked(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        fake.drop_status()
+        fake.payloads["trv_mini_1"]["sZDOInfo"]["OnlineStatus_i"] = 0
+
+        self.assertEqual([], await fake.poll(1000))
+
+    async def test_recovered_trv_waits_for_the_regular_interval(self) -> None:
+        fake = _FakeTrvGateway()
+        sit600i = fake.drop_status()
+        # Only one request, although the regular interval is also due.
+        self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1000))
+
+        fake.payloads["trv_mini_1"]["sIT600I"] = sit600i  # The TRV answered.
+
+        self.assertEqual([], await fake.poll(1015))
+        self.assertIsNotNone(fake.gateway.get_binary_sensor_device("trv_mini_1"))
+        self.assertEqual({}, fake.gateway._mini_trv_missing_status)
+        # The recovery request starts the regular wait.
+        self.assertEqual([], await fake.poll(1000 + REQUEST_AFTER - 1))
+        self.assertEqual(
+            [("trv_mini_1", STATUS_REQUEST)], await fake.poll(1000 + REQUEST_AFTER)
+        )
+
+    async def test_next_restart_is_logged_at_info_again(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        sit600i = fake.drop_status()
+        await fake.poll(1000)
+        fake.payloads["trv_mini_1"]["sIT600I"] = sit600i
+        await fake.poll(1015)
+
+        fake.drop_status()  # Another gateway restart.
+        with self.assertLogs("salus_it600", level="INFO") as logs:
+            self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(5000))
+
+        self.assertTrue(any("has no status" in line for line in logs.output))
+
+    async def test_failed_request_does_not_fail_the_poll(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        fake.drop_status()
+        fake.write_error = IT600ConnectionError("dropped")
+
+        with self.assertLogs("salus_it600", level="WARNING") as logs:
+            self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1000))
+
+        self.assertTrue(any("Could not ask" in line for line in logs.output))
+        # A failed request still counts, so it is not resent on every poll.
+        self.assertEqual([], await fake.poll(1030))
+
+    async def test_skipped_while_the_trv_lock_is_held(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        fake.drop_status()
+
+        async with fake.gateway._mini_trv_command_lock("trv_mini_1"):
+            self.assertEqual([], await fake.poll(1000))
+        self.assertEqual([("trv_mini_1", STATUS_REQUEST)], await fake.poll(1010))
+
+    async def test_each_missing_trv_is_asked(self) -> None:
+        fake = _FakeTrvGateway(mini_trv_request_report_after=None)
+        second = _mini_trv_payload()
+        second["data"]["UniID"] = "trv_mini_2"
+        fake.payloads["trv_mini_2"] = second
+        fake.drop_status("trv_mini_2")
+
+        # trv_mini_1 still has its block, so only trv_mini_2 is asked.
+        self.assertEqual([("trv_mini_2", STATUS_REQUEST)], await fake.poll(1000))
+        self.assertIsNotNone(fake.gateway.get_binary_sensor_device("trv_mini_1"))
 
 
 if __name__ == "__main__":

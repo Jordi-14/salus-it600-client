@@ -70,6 +70,7 @@ from .parsers import (
     PARSING_EXCEPTIONS,
     decode_mini_trv_report,
     device_short_id,
+    is_mini_trv_missing_status,
     parse_binary_diagnostic_devices,
     parse_binary_relay_sensor_devices,
     parse_binary_sensor_device,
@@ -456,6 +457,10 @@ class _MiniTrvReportState:
     requested_at: float | None = None
     # Whether the last status request failed, so repeats are logged at debug.
     request_failed: bool = False
+    # Whether the TRV has been asked for a report since its record lost its
+    # `sIT600I` block. The first request is sent straight away and logged at
+    # info; later ones follow `mini_trv_request_report_after`.
+    missing_status_asked: bool = False
 
 
 class IT600Gateway:
@@ -484,7 +489,9 @@ class IT600Gateway:
                 decryption.
             mini_trv_request_report_after: Seconds an it600MINITRV can go
                 without a new report, or a request for one, before
-                `poll_status()` asks it for one. None (default) turns this off.
+                `poll_status()` asks it for one. None (default) turns this off;
+                a TRV with no status after a gateway restart is still asked
+                once.
         """
         euid = _validate_non_empty_string(euid, "euid")
         host = _validate_non_empty_string(host, "host")
@@ -546,6 +553,9 @@ class IT600Gateway:
         # the next for the same TRV.
         self._mini_trv_command_locks: dict[str, asyncio.Lock] = {}
         self._mini_trv_report_states: dict[str, _MiniTrvReportState] = {}
+        # Online it600MINITRVs whose record in the last poll had no `sIT600I`
+        # block, as unique ID -> the record's `data` envelope for writes.
+        self._mini_trv_missing_status: dict[str, dict[str, Any]] = {}
 
     async def connect(self) -> str:
         """Validate gateway access and return the gateway MAC address.
@@ -729,10 +739,12 @@ class IT600Gateway:
     def mini_trv_request_report_after(self) -> int | float | None:
         """Seconds an it600MINITRV can go without a report before one is requested.
 
-        None means `poll_status()` never asks. It can be changed at any time and
-        the next poll uses the new value. Each TRV's wait is measured from its
-        last new report or request, so after a change the next poll asks every
-        TRV that has already waited longer than the new value.
+        None means `poll_status()` never asks on a schedule; it still asks a TRV
+        once when its record has no `sIT600I` block after a gateway restart. It
+        can be changed at any time and the next poll uses the new value. Each
+        TRV's wait is measured from its last new report or request, so after a
+        change the next poll asks every TRV that has already waited longer than
+        the new value.
         """
         return self._mini_trv_request_report_after
 
@@ -751,10 +763,12 @@ class IT600Gateway:
         the gateway does not handle that. Invalid individual devices are logged
         and skipped; gateway communication errors propagate to the caller.
 
-        Afterwards, if `mini_trv_request_report_after` is set, each online
+        Afterwards, each online it600MINITRV whose record has no `sIT600I`
+        block (after a gateway restart) is asked once for a status report,
+        whatever `mini_trv_request_report_after` is. If that is set, each online
         it600MINITRV that has gone that many seconds without a new report or a
-        request for one is asked for a report (see `_request_stale_mini_trv_reports`).
-        The reply shows up in a later poll.
+        request for one is asked too (see `_request_mini_trv_reports`). The
+        reply shows up in a later poll.
         """
 
         all_devices = await self._make_encrypted_request(
@@ -802,7 +816,7 @@ class IT600Gateway:
         finally:
             self._prefetched_details = None
 
-        await self._request_stale_mini_trv_reports()
+        await self._request_mini_trv_reports()
 
     async def _prefetch_device_details(
         self,
@@ -1053,6 +1067,7 @@ class IT600Gateway:
         local_devices: dict[str, BinarySensorDevice] = {}
         diagnostic_devices: dict[str, BinarySensorDevice] = {}
         sensor_devices: dict[str, SensorDevice] = {}
+        missing_status: dict[str, dict[str, Any]] = {}
 
         # Signal-quality and MiniTRV temperature readings are not in every
         # poll, so the previous collection is handed to the parser to carry
@@ -1089,6 +1104,11 @@ class IT600Gateway:
                 local_devices[device.unique_id] = device
                 if device.model == MODEL_MINI_TRV:
                     self._note_mini_trv_report(device.unique_id, device_status)
+                    self._mini_trv_report_state(
+                        device.unique_id
+                    ).missing_status_asked = False
+            elif is_mini_trv_missing_status(device_status):
+                missing_status[unique_id] = device_status["data"]
 
             for diagnostic in diagnostics:
                 diagnostic_devices[diagnostic.unique_id] = diagnostic
@@ -1098,10 +1118,17 @@ class IT600Gateway:
 
         self._binary_sensor_devices = local_devices
         self._binary_sensor_diagnostic_devices = diagnostic_devices
+        self._mini_trv_missing_status = missing_status
         # Forget report state for TRVs missing from this poll (offline ones are
         # still listed), so the dict doesn't keep removed devices. A TRV that
         # returns is treated like one seen at startup and asked straight away.
-        for device_id in self._mini_trv_report_states.keys() - local_devices.keys():
+        # A TRV whose record has no `sIT600I` block keeps its state, so the
+        # request that brings the block back also starts its wait.
+        for device_id in (
+            self._mini_trv_report_states.keys()
+            - local_devices.keys()
+            - missing_status.keys()
+        ):
             del self._mini_trv_report_states[device_id]
         self._binary_sensor_sensor_devices = sensor_devices
         _LOGGER.debug("Refreshed %s binary sensor devices", len(local_devices))
@@ -1249,15 +1276,48 @@ class IT600Gateway:
         times = [t for t in (state.reported_at, state.requested_at) if t is not None]
         return not times or now - max(times) >= request_after
 
-    async def _request_stale_mini_trv_reports(self) -> None:
-        """Ask each online it600MINITRV with no recent report to send one.
+    async def _request_mini_trv_reports(self) -> None:
+        """Ask it600MINITRVs for a status report where one is needed.
+
+        Two cases, each TRV at most once per poll:
+
+        - An online TRV whose record has no `sIT600I` block, which happens
+          after a gateway restart, has no device until the TRV sends a
+          message. It is asked once straight away, whatever
+          `mini_trv_request_report_after` is. While the block is still
+          missing, it is asked again on the same schedule as below; with
+          None it is not asked again.
+        - When `mini_trv_request_report_after` is set, an online TRV that has
+          gone that long without a new report or a request is asked.
 
         A TRV is skipped while another command sequence for it holds its lock:
         `set_mini_trv_mode()` asks for a report itself, and a request written
         during its pause would cancel the mode command. A failed request is
-        logged and retried once `mini_trv_request_report_after` has passed
-        again; it does not fail the poll.
+        logged and counts as a request for the schedule; it does not fail the
+        poll.
         """
+        for device_id, data in list(self._mini_trv_missing_status.items()):
+            state = self._mini_trv_report_state(device_id)
+            lock = self._mini_trv_command_lock(device_id)
+            if lock.locked() or (
+                state.missing_status_asked
+                and not self._mini_trv_report_request_due(
+                    state, self._mini_trv_report_time()
+                )
+            ):
+                continue
+
+            async with lock:
+                first = not state.missing_status_asked
+                state.missing_status_asked = True
+                if await self._send_mini_trv_status_request(device_id, data, state):
+                    log = _LOGGER.info if first else _LOGGER.debug
+                    log(
+                        "it600MINITRV %s has no status on the gateway (usually after "
+                        "a gateway restart); asked it for a status report",
+                        device_id,
+                    )
+
         if self._mini_trv_request_report_after is None:
             return
 
@@ -1272,23 +1332,39 @@ class IT600Gateway:
                 continue
 
             async with lock:
-                state.requested_at = self._mini_trv_report_time()
-                try:
-                    await self._write_device(
-                        device,
-                        {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}},
-                    )
-                except (IT600CommandError, IT600ConnectionError) as err:
-                    log = _LOGGER.debug if state.request_failed else _LOGGER.warning
-                    log(
-                        "Could not ask it600MINITRV %s for a status report: %s",
-                        device_id,
-                        err,
-                    )
-                    state.request_failed = True
-                else:
-                    state.request_failed = False
+                if await self._send_mini_trv_status_request(
+                    device_id, device.data, state
+                ):
                     _LOGGER.debug("Asked it600MINITRV %s for a status report", device_id)
+
+    async def _send_mini_trv_status_request(
+        self,
+        device_id: str,
+        data: dict[str, Any],
+        state: _MiniTrvReportState,
+    ) -> bool:
+        """Write the status request to one it600MINITRV; return whether it was sent.
+
+        The caller holds the TRV's command lock. The gateway answers `success`
+        to any `SetCommand_d`, so only a later poll shows whether it worked.
+        """
+        state.requested_at = self._mini_trv_report_time()
+        try:
+            await self._write_device_data(
+                data,
+                {"sIT600I": {"SetCommand_d": _MINI_TRV_STATUS_REQUEST}},
+            )
+        except (IT600CommandError, IT600ConnectionError) as err:
+            log = _LOGGER.debug if state.request_failed else _LOGGER.warning
+            log(
+                "Could not ask it600MINITRV %s for a status report: %s",
+                device_id,
+                err,
+            )
+            state.request_failed = True
+            return False
+        state.request_failed = False
+        return True
 
     def _require_device(
         self,
@@ -1539,11 +1615,19 @@ class IT600Gateway:
         request_data: dict[str, dict[str, Any]],
     ) -> None:
         """Write one encrypted command envelope for a cached device."""
+        await self._write_device_data(device.data, request_data)
+
+    async def _write_device_data(
+        self,
+        data: dict[str, Any],
+        request_data: dict[str, dict[str, Any]],
+    ) -> None:
+        """Write one encrypted command envelope addressed by a `data` envelope."""
         await self._make_encrypted_request(
             "write",
             {
                 "requestAttr": "write",
-                "id": [{"data": device.data, **request_data}],
+                "id": [{"data": data, **request_data}],
             },
         )
 

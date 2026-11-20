@@ -2,6 +2,7 @@
 
 from .advanced_settings import parse_advanced_settings
 from .binary_sensor import (
+    is_mini_trv_missing_status,
     parse_binary_diagnostic_devices,
     parse_binary_relay_sensor_devices,
     parse_binary_sensor_device,
@@ -31,6 +32,7 @@ __all__ = [
     "MiniTrvReport",
     "decode_mini_trv_report",
     "device_short_id",
+    "is_mini_trv_missing_status",
     "parse_advanced_settings",
     "parse_binary_diagnostic_devices",
     "parse_binary_relay_sensor_devices",

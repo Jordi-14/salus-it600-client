@@ -272,6 +272,20 @@ TRV is asked once at startup. The reply arrives in a later poll, not the one tha
 sent the request. A TRV is skipped while a mode change for it is in progress,
 because a request written during that change's 4-second pause would cancel it.
 
+After a gateway restart, the gateway still lists an online TRV
+(`sZDOInfo.OnlineStatus_i` 1) but its `deviceid` record has no `sIT600I` block
+until the TRV next sends a message. Only `DeviceL`, `data`, `sAWSReg`,
+`sBasicS`, `sEndpt`, `sGenSche`, `sIT600D`, `sOTA`, `sZDO`, `sZDOInfo` and
+`status` are present, so there is no `RelayStatus`, `Mode`, RSSI, LQI,
+`CommandResponse_d` or `TRVError*`. Without `RelayStatus` the client has no
+device for the TRV. Seen on 2026-11-20 on two of three TRVs after a restart. One
+status request, written to the record's `data` envelope, brought the block back
+within 15 seconds. So `poll_status()` sends that request once to each such TRV
+as soon as it sees it, even when `mini_trv_request_report_after` is None. While
+the block is still missing, later requests follow `mini_trv_request_report_after`
+like any other TRV; with None there are none. Each request starts the TRV's
+regular wait, so the TRV is not asked again as soon as it returns.
+
 In tests, writing the status request with no pause dropped the mode command.
 This suggests `SetCommand_d` holds one command per device, with the last write
 winning, so any two writes to the same TRV need a gap between them.

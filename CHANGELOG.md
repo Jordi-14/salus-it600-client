@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Fix: it600MINITRVs could stay unavailable for hours after a gateway
+  restart.** After a restart the UG600 keeps an online TRV's record but has no
+  `sIT600I` status block for it until the TRV next sends a message. The client
+  skipped such records, so every entity for the TRV (heat, battery, problem,
+  temperature, signal and Mode) stayed unavailable in Home Assistant, sometimes
+  for hours. `poll_status()` now sends these TRVs the `B37` status request, which
+  brings the block back within about 15 seconds; the device returns on a later
+  poll. The first request is sent whatever `mini_trv_request_report_after` is
+  set to, including the default `None`. If the block is still missing, the TRV
+  is asked again on the `mini_trv_request_report_after` schedule, or not at all
+  when that is `None`. Offline TRVs, and TRVs in the middle of a mode change, are
+  skipped. The first request for each TRV is logged at info.
 - Add `IT600Gateway(mini_trv_request_report_after=seconds)` to ask each
   it600MINITRV for a status report when it has gone that long without sending
   one. When set, `poll_status()` writes
