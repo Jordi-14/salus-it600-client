@@ -217,7 +217,8 @@ The minimum tails (16 hex characters after a paired `@`, 19 from character 36 of
 an unpaired report) are lower limits based on edited samples, not protocol rules.
 The complete reports available, one paired from a real TRV and one unpaired
 stored in the vendor app, are both 73 characters and hold hex letters in the
-tail. Characters 49-50 are probably RSSI as a signed byte, which is not decoded;
+tail. Characters 49-50 are RSSI as a signed byte (characters 53-54 on TRV
+firmware 5.1 or older). The client does not decode them;
 `sIT600I.LastMessageRSSI_d` reports signal strength instead.
 
 The valve position is checked for shape but not decoded. Two TRVs tested read
@@ -244,6 +245,22 @@ ASCII text. `set_mini_trv_mode()` sends the same commands as the vendor app:
 After a mode change the vendor app waits 4 seconds and then asks the TRV for a
 status report by writing `42 33 37 00 00 00 00 00 00 00 00 78` (`B37`, eight
 zero bytes, `x`). This client does the same.
+
+The vendor app does not ask for reports on a schedule. It writes the status
+request only when a device's information screen opens, when its signal-strength
+refresh button is tapped, and after a command.
+
+The TRV sends reports on its own, but irregularly, sometimes hours apart. When
+the gateway is created with `mini_trv_request_report_after` (seconds; off by
+default, as the effect on battery life is unknown), `poll_status()` writes the
+status request to each online TRV that has gone that long without a new report.
+The reply arrives in a later poll, not the one that sent the request.
+
+After a gateway restart, an online TRV's `deviceid` record can lack the
+`sIT600I` block (so no `RelayStatus`, `Mode` or `CommandResponse_d`) until the
+TRV next sends a message. One status request brings the block back within
+seconds, so `poll_status()` sends one to each such TRV as soon as it sees it,
+even when `mini_trv_request_report_after` is None.
 
 In tests, writing the status request with no pause dropped the mode command.
 This suggests `SetCommand_d` holds one command per device, with the last write

@@ -19,6 +19,7 @@ from .common import (
     _child_sensor_device,
     _common_device_args,
     _device_name,
+    _online,
     _signal_sensor_devices,
 )
 from .mini_trv import decode_mini_trv_report
@@ -69,6 +70,22 @@ def parse_binary_sensor_device(
         device_class=binary_sensor_device_class(model),
         extra_state_attributes=extra_state_attributes,
         mini_trv_mode=mini_trv_mode,
+    )
+
+
+def is_mini_trv_missing_status(device_status: dict[str, Any]) -> bool:
+    """Return whether an online it600MINITRV record has no `sIT600I` block.
+
+    After a gateway restart the gateway keeps the TRV's record but has no
+    `sIT600I` status for it until the TRV next sends a message, which can take
+    hours. `parse_binary_sensor_device()` returns None for such a record, so it
+    has no device. A status request brings the block back.
+    """
+    return (
+        isinstance(device_status.get("data", {}).get("UniID"), str)
+        and model_identifier(device_status) == MODEL_MINI_TRV
+        and _online(device_status)
+        and not isinstance(device_status.get("sIT600I"), dict)
     )
 
 
