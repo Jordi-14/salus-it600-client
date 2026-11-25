@@ -138,6 +138,9 @@ Deliberately not decoded:
   [Comfort Warm Floor setter](comfort-warm-floor-write.md) is available for
   one verified profile; this is not a general settings or PIN encoder.
   Other counter/PIN variants remain unverified.
+- **Display resolution.** An experimental
+  [display resolution setter](display-resolution-write.md) changes byte 11
+  only, for the same verified profile.
 
 ### FC600
 

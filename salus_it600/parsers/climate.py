@@ -42,6 +42,7 @@ from ..const import (
     SystemMode,
 )
 from ..device_models import BATTERY_OEM_MODELS, is_sq610_model, model_identifier
+from ..display_resolution import supports_display_resolution
 from ..models import (
     BinarySensorDevice,
     ClimateDevice,
@@ -433,6 +434,7 @@ def _parse_sq610_climate_device(
         diagnostic_fields=climate_diagnostic_fields(diagnostic_payload),
         advanced_settings=parse_advanced_settings(th),
         supports_comfort_warm_floor=supports_comfort_warm_floor_profile(device_status),
+        supports_display_resolution=supports_display_resolution(device_status),
     )
 
 
