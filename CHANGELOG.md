@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add experimental `set_climate_device_display_resolution()` (0.5 °C / 0.1 °C)
+  and `ClimateDevice.supports_display_resolution` for SQ610RFNH firmware
+  00000054.
+
 ## 0.8.0 - 2026-11-08
 
 - Promote 0.8.0b3 to stable with no runtime changes beyond the version bump.

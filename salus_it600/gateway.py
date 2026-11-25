@@ -46,6 +46,14 @@ from .device_models import (
     is_sq610_model,
     is_trv_model,
 )
+from .display_resolution import (
+    DISPLAY_RESOLUTION_PENDING_SECONDS,
+    build_display_resolution_command,
+    display_resolution_applied,
+    is_non_settings_response,
+    settings_command_response,
+    validated_display_settings,
+)
 from .encryptor import IT600Encryptor
 from .exceptions import (
     IT600AuthenticationError,
@@ -475,6 +483,8 @@ class IT600Gateway:
         self._lock = asyncio.Lock()  # Gateway supports very few concurrent requests
         self._comfort_floor_lock = asyncio.Lock()
         self._pending_floor_commands: dict[str, tuple[str, float]] = {}
+        self._display_resolution_lock = asyncio.Lock()
+        self._pending_display_resolution: dict[str, tuple[str, float]] = {}
 
         self._session = session
         self._close_session = False
@@ -1380,6 +1390,87 @@ class IT600Gateway:
                     or items[0].get("data", {}).get("UniID") != device.unique_id
                     or items[0].get("data", {}).get("Endpoint") != device.data.get("Endpoint")):
                 raise IT600CommandError("Gateway did not acknowledge the floor-comfort write")
+
+    def _display_resolution_time(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    async def _read_display_resolution_status(self, device: ClimateDevice) -> dict[str, Any]:
+        """Read one fresh matching online device; never replay a settings write."""
+        response = await self._make_encrypted_request(
+            "read", {"requestAttr": "deviceid", "id": [{"data": device.data}]},
+        )
+        matches = [item for item in _response_items(response, "display-resolution detail")
+                   if item.get("data") == device.data and item.get("status") == "success"]
+        if len(matches) != 1:
+            raise IT600CommandError("Expected one successful display-resolution device response")
+        status = matches[0]
+        if status.get("sZDOInfo", {}).get("OnlineStatus_i") != 1:
+            raise IT600ValidationError("Cannot change display resolution on an offline device")
+        validated_display_settings(status, check_command=False)
+        return status
+
+    async def set_climate_device_display_resolution(
+        self,
+        device_id: str,
+        resolution: int,
+    ) -> None:
+        """Send one profile-gated display resolution write: 0 is 0.5 °C, 1 is 0.1 °C.
+
+        Acknowledgement is not device confirmation. Poll normally to observe the
+        device. The local pending guard expires after 120 seconds; it never
+        replays a command or restores a stale snapshot.
+        """
+        resolution = _validate_int_range(resolution, "display resolution", 0, 1)
+        device = self._require_device(device_id, self._climate_devices, "climate")
+        if not device.available:
+            raise IT600ValidationError("Cannot change display resolution on an offline device")
+        async with self._display_resolution_lock:
+            status = await self._read_display_resolution_status(device)
+            pending = self._pending_display_resolution.get(device_id)
+            expired_command = None
+            if pending is not None:
+                previous_command, expires_at = pending
+                if display_resolution_applied(status, previous_command):
+                    del self._pending_display_resolution[device_id]
+                elif self._display_resolution_time() < expires_at:
+                    raise IT600ValidationError("Previous display resolution command is still pending or uncertain")
+                else:
+                    # Keep the expired local identity until recovery succeeds.
+                    expired_command = previous_command
+            echo = settings_command_response(status)
+            # Only a known, expired local echo may bypass the in-flight echo
+            # check. Unknown external commands still use the strict guard.
+            stale_local_echo = expired_command is not None and echo == expired_command.lower() + "00"
+            original = validated_display_settings(status, check_command=not stale_local_echo)
+            if stale_local_echo or is_non_settings_response(echo):
+                await asyncio.sleep(2)
+                stable = await self._read_display_resolution_status(device)
+                if validated_display_settings(stable, check_command=False) != original:
+                    raise IT600ValidationError("Display resolution settings changed during stability check")
+                if settings_command_response(stable) != echo:
+                    stale_local_echo = False
+                    validated_display_settings(stable)
+                status = stable
+            command = build_display_resolution_command(
+                status,
+                resolution,
+                check_command=not stale_local_echo,
+            )
+            if command is None:
+                return
+            self._pending_display_resolution[device_id] = (
+                command, self._display_resolution_time() + DISPLAY_RESOLUTION_PENDING_SECONDS,
+            )
+            result = await self._make_encrypted_request(
+                "write", {"requestAttr": "write", "id": [
+                    {"data": device.data, "sIT600I": {"SetCommand_d": command}},
+                ]}, retry_disconnect=False,
+            )
+            items = _response_items(result, "display-resolution write")
+            if (len(items) != 1 or items[0].get("status") != "success"
+                    or items[0].get("data", {}).get("UniID") != device.unique_id
+                    or items[0].get("data", {}).get("Endpoint") != device.data.get("Endpoint")):
+                raise IT600CommandError("Gateway did not acknowledge the display-resolution write")
 
     async def _write_sq610_property(
         self,
